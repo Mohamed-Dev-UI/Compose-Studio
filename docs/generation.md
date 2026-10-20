@@ -527,7 +527,7 @@ once). Instead of editing text, fields are parsed-config controls:
 | Asset kind                   | `none` / `icon` / `image` / `vector` segments |
 | Assets policy                | `auto` / `export` / `code` segments           |
 | Implementation               | `auto` / `custom` (only when the role is `card` / `button` / `fab`) |
-| Mapping                      | text input; mapping arguments get a row editor (name + source + constant value) |
+| Mapping                      | text input; mapping arguments get a row editor (name + source + constant value). The rows and the *+ Add argument* button unlock the moment the mapping is set; until then the button renders disabled with a tooltip and a hint explains that a mapping is required |
 | Note                         | free-text area                                |
 
 Actions per editor: **Apply** (writes prose + rendered block per component,

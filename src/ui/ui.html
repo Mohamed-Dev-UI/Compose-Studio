@@ -26,7 +26,7 @@
     --text: var(--figma-color-text, #333333);
     --text2: var(--figma-color-text-secondary, #666666);
     --border: var(--figma-color-border, #e0e0e0);
-    --brand: var(--figma-color-brand-primary, #18a0fb);
+    --brand: var(--figma-color-text-brand, #18a0fb);
     --danger: #f24822;
     --warn: #f5a623;
     --ok: #14ae5c;
@@ -35,6 +35,10 @@
     --grad: linear-gradient(135deg, #6a3de8 0%, #7f52ff 52%, #18a0fb 130%);
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
     --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.14);
+    /* One height/radius for every control (buttons, inputs, selects, segments)
+       so rows line up and reused buttons read as the same component. */
+    --ctl-h: 26px;
+    --ctl-radius: 7px;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
@@ -49,6 +53,9 @@
   ::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 5px; border: 2px solid var(--bg); }
   ::-webkit-scrollbar-thumb:hover { background: var(--text2); }
   ::-webkit-scrollbar-track { background: transparent; }
+  /* The unstyled corner between a vertical and a horizontal scrollbar paints
+     white by default; show the element underneath instead. */
+  ::-webkit-scrollbar-corner { background: transparent; }
 
   /* ------------------------------ header ---------------------------- */
   .app-header {
@@ -152,7 +159,8 @@
   }
   .card-icon svg { width: 14px; height: 14px; }
   .card.tone-ok .card-icon, .card-icon.tone-ok { background: rgba(20, 174, 92, 0.14); color: #14ae5c; }
-  .card.tone-warn .card-icon, .card-icon.tone-warn { background: rgba(245, 166, 35, 0.16); color: #d98c0f; }
+  .card.tone-warn .card-icon, .card-icon.tone-warn { background: rgba(245, 166, 35, 0.16); color: #b87508; }
+  .figma-dark .card.tone-warn .card-icon, .figma-dark .card-icon.tone-warn { color: var(--warn); }
   .card.tone-info .card-icon, .card-icon.tone-info { background: rgba(24, 160, 251, 0.14); color: #18a0fb; }
   .card.tone-danger .card-icon, .card-icon.tone-danger { background: rgba(242, 72, 34, 0.13); color: #f24822; }
   .card-titles { flex: 1; min-width: 0; }
@@ -179,13 +187,30 @@
   .field { margin-bottom: 8px; }
   .field:last-child { margin-bottom: 0; }
   .row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
-  input[type=text], select {
+  input[type=text], textarea, select {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: 7px; padding: 5.5px 9px; font: inherit; min-width: 0; width: 100%;
+    border-radius: var(--ctl-radius); padding: 6px 9px;
+    font: inherit; min-width: 0; width: 100%;
     transition: border-color 0.15s, box-shadow 0.15s;
+    resize: vertical;
   }
-  select { cursor: pointer; }
-  input[type=text]:focus, select:focus {
+  input[type=text], select { height: var(--ctl-h); padding: 0 9px; }
+  /* Dropdowns: identical surface to text inputs, theme-following chevron. */
+  select {
+    cursor: pointer; appearance: none; -webkit-appearance: none;
+    padding-right: 24px; text-overflow: ellipsis;
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--text2) 50%),
+      linear-gradient(135deg, var(--text2) 50%, transparent 50%);
+    background-position: calc(100% - 11px) center, calc(100% - 7px) center;
+    background-size: 4px 4px;
+    background-repeat: no-repeat;
+  }
+  select:focus { background-image:
+    linear-gradient(45deg, transparent 50%, var(--accent) 50%),
+    linear-gradient(135deg, var(--accent) 50%, transparent 50%);
+  }
+  input[type=text]:focus, textarea:focus, select:focus {
     outline: none; border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(127, 82, 255, 0.18);
   }
@@ -203,20 +228,22 @@
 
   /* ------------------------------ buttons --------------------------- */
   button.primary {
-    background: var(--grad); color: #fff; border: none; border-radius: 8px;
-    padding: 8px 15px; font: inherit; font-weight: 600; cursor: pointer;
+    background: var(--grad); color: var(--figma-color-text-onbrand, #fff); border: none;
+    border-radius: var(--ctl-radius); height: var(--ctl-h); min-width: 76px;
+    padding: 0 13px; font: inherit; font-weight: 600; cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
     box-shadow: 0 2px 6px rgba(127, 82, 255, 0.3);
     transition: transform 0.12s ease, box-shadow 0.15s ease, opacity 0.15s;
   }
   button.primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(127, 82, 255, 0.4); }
   button.primary:active:not(:disabled) { transform: translateY(0); box-shadow: 0 1px 3px rgba(127, 82, 255, 0.3); }
-  button.primary:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+  button.primary:disabled { opacity: 0.45; cursor: default; box-shadow: none; transform: none; }
   button.primary svg, button.secondary svg { width: 12px; height: 12px; }
   button.secondary {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: 7px; padding: 5.5px 11px; font: inherit; cursor: pointer;
-    display: inline-flex; align-items: center; gap: 6px; font-weight: 500;
+    border-radius: var(--ctl-radius); height: var(--ctl-h); min-width: 64px;
+    padding: 0 11px; font: inherit; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 500;
     transition: background 0.15s, border-color 0.15s, transform 0.12s;
   }
   button.secondary:hover { background: var(--bg3); border-color: var(--text2); }
@@ -229,18 +256,18 @@
   /* --------------------------- segmented ---------------------------- */
   .segmented {
     display: flex; gap: 3px; background: var(--bg); border: 1px solid var(--border);
-    border-radius: 8px; padding: 3px;
+    border-radius: 8px; padding: 3px; height: var(--ctl-h);
   }
   .seg-btn {
     flex: 1; appearance: none; border: none; background: transparent; color: var(--text2);
-    font: inherit; font-weight: 500; cursor: pointer; padding: 6px 8px;
+    font: inherit; font-weight: 500; cursor: pointer; padding: 0 8px;
     border-radius: 6px; transition: background 0.15s, color 0.15s, box-shadow 0.15s;
     text-align: center; white-space: nowrap;
+    display: inline-flex; align-items: center; justify-content: center;
   }
   .seg-btn:hover { color: var(--text); }
   .seg-btn.active {
-    background: var(--accent); color: #fff; font-weight: 600;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    background: var(--accent); color: var(--figma-color-text-onbrand, #fff); font-weight: 600;
   }
 
   /* --------------------------- status pill -------------------------- */
@@ -278,7 +305,9 @@
     background: var(--bg3); color: var(--text2);
     letter-spacing: 0.02em; flex: none;
   }
-  .tag.kind { color: #fff; border: none; background: #88909b; }
+  /* Type chips sit on Figma's fixed node-color palette (k-* hues below),
+     which is designed for white text in both themes. */
+  .tag.kind { color: #fff; border: none; background: var(--bg3); }
   .tag.k-DEFAULT { background: #88909b; }
   .tag.k-TEXT { background: #18a0fb; }
   .tag.k-FRAME { background: #7f52ff; }
@@ -320,7 +349,7 @@
   .asset-tile.pinned { opacity: 0.55; }
   .tile-check {
     position: absolute; top: 5px; right: 5px;
-    background: rgba(255, 255, 255, 0.92); border-radius: 4px; padding: 1.5px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1.5px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
   }
   .asset-tile.pinned .tile-check { cursor: not-allowed; }
@@ -362,8 +391,9 @@
   }
   button.sevchip {
     appearance: none; font: inherit; font-size: 10px; font-weight: 600; cursor: pointer;
-    padding: 3.5px 9px; border-radius: 20px; border: 1px solid var(--border);
+    height: 22px; padding: 0 9px; border-radius: 20px; border: 1px solid var(--border);
     background: var(--bg); color: var(--text2);
+    display: inline-flex; align-items: center;
     transition: border-color 0.15s, background 0.15s, color 0.15s;
   }
   button.sevchip:hover { border-color: var(--text2); }
@@ -373,7 +403,8 @@
   button.sevchip.c-warning { --sev: #f5a623; }
   button.sevchip.c-info { --sev: #18a0fb; }
   button.sevchip.c-error.active { border-color: var(--danger); color: var(--danger); background: rgba(242, 72, 34, 0.08); }
-  button.sevchip.c-warning.active { border-color: var(--warn); color: #d98c0f; background: rgba(245, 166, 35, 0.1); }
+  button.sevchip.c-warning.active { border-color: var(--warn); color: #b87508; background: rgba(245, 166, 35, 0.1); }
+  .figma-dark button.sevchip.c-warning.active { color: var(--warn); }
   button.sevchip.c-info.active { border-color: var(--brand); color: var(--brand); background: rgba(24, 160, 251, 0.08); }
   .diag {
     display: flex; gap: 8px; align-items: flex-start;
@@ -397,8 +428,9 @@
   .pill-check { width: 12px; height: 12px; }
   button.filepill {
     appearance: none; font: 10px/1.4 SFMono-Regular, Consolas, monospace; cursor: pointer;
-    padding: 4.5px 10px; border-radius: 7px; border: 1px solid var(--border);
+    height: 22px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--border);
     background: var(--bg); color: var(--text2);
+    display: inline-flex; align-items: center;
     transition: border-color 0.15s, background 0.15s, color 0.15s;
   }
   button.filepill:hover { border-color: var(--text2); color: var(--text); }
@@ -418,6 +450,12 @@
   }
   .tok-str { color: #17803d; } .tok-kw { color: #af26a3; } .tok-ann { color: #b26a00; }
   .tok-num { color: #1a5fb4; } .tok-cmt { color: var(--text2); font-style: italic; }
+  /* Light-tuned syntax colors are unreadable-dark on the dark scheme; the
+     figma-dark class is injected on <html> when themeColors is enabled. */
+  .figma-dark .tok-str { color: #4fc78a; }
+  .figma-dark .tok-kw { color: #d78bf5; }
+  .figma-dark .tok-ann { color: #f0a742; }
+  .figma-dark .tok-num { color: #6fb2ff; }
 
   /* --------------------------- mark + row lists -------------------- */
   .markrow {
@@ -443,7 +481,7 @@
   .config-item .config-summary { font-size: 10px; color: var(--text2); margin: 0 0 5px; line-height: 1.4; }
   .config-item .config-issues { color: var(--warn); font-size: 9.5px; margin: 0 0 5px; line-height: 1.4; }
   .config-actions { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
-  .config-actions button.secondary { flex: none; font-size: 10px; padding: 4px 9px; }
+  .config-actions button.secondary { flex: none; min-width: 74px; padding: 0 9px; }
   .config-actions .config-filler { flex: 1; }
   /* Visual configuration editor fields (CCD rev. 29). */
   .cc-field { margin-top: 8px; }
@@ -459,10 +497,10 @@
     max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .cc-field .segmented { padding: 2px; }
-  .cc-field .seg-btn { padding: 4px 6px; font-size: 10.5px; }
+  .cc-field .seg-btn { padding: 0 6px; font-size: 10.5px; }
   .cc-grid { display: grid; grid-template-columns: 1fr; gap: 0; }
   .cc-argrow { display: grid; grid-template-columns: 96px 88px 1fr 20px; gap: 5px; margin-bottom: 5px; align-items: center; }
-  .cc-argrow input[type="text"], .cc-argrow select { padding: 4px 7px; font-size: 10.5px; }
+  .cc-argrow input[type="text"], .cc-argrow select { padding: 0 7px; font-size: 10.5px; }
   .cc-argrow .del {
     appearance: none; border: none; background: none; color: var(--text2);
     cursor: pointer; padding: 1px 3px; font-size: 12px; line-height: 1;
@@ -482,7 +520,7 @@
   .config-item textarea.config-advanced {
     width: 100%; box-sizing: border-box; resize: vertical; min-height: 92px;
     font: 10px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    color: var(--text); background: rgba(255, 255, 255, 0.03);
+    color: var(--text); background: var(--bg);
     border: 1px solid var(--border); border-radius: 6px; padding: 6px 7px; margin-top: 6px;
   }
   .config-item textarea.config-advanced:focus { outline: none; border-color: var(--accent, #57adff); }
@@ -2135,7 +2173,7 @@ function ccFieldArgs() {
   if (ccEditor.args.mixed && !mappingActive) {
     const mixedNote = document.createElement('p');
     mixedNote.className = 'cc-argsummary';
-    mixedNote.textContent = 'Components carry different arguments; set a mapping first to edit them.';
+    mixedNote.textContent = 'Components carry different arguments; set a shared mapping above to edit them.';
     wrap.appendChild(mixedNote);
   }
   if (ccEditor.args.mixed && mappingActive) {
@@ -2147,25 +2185,29 @@ function ccFieldArgs() {
   if (!mappingActive) {
     const hint = document.createElement('p');
     hint.className = 'hint';
-    hint.textContent = 'Mapping arguments fill the target composable\'s parameters once a mapping is set (they edit rows below). Sources: ' + CC_ARG_SOURCES.map((s) => '@' + s).join(' · ') + '. Quoted/typed values are constants.';
+    hint.innerHTML = 'Type a <b>mapping</b> above first — argument rows and <b>+ Add argument</b> unlock the moment it is set. Sources: '
+      + CC_ARG_SOURCES.map((s) => '@' + s).join(' · ') + ' fill the mapped composable\'s parameters; quoted/typed values are constants.';
     wrap.appendChild(hint);
   }
   const rows = mappingActive && !ccEditor.args.mixed ? ccEditor.args.rows : [];
   for (const row of rows) ccArgRow(wrap, row);
-  // Without a resolved mapping there is nothing to attach arguments to —
-  // the button previously appeared anyway and silently touched the args
-  // state with an empty row (invisible in the editor, corrupt on Apply).
-  if (mappingActive) {
-    const add = document.createElement('button');
-    add.type = 'button';
-    add.className = 'secondary';
-    add.textContent = '+ Add argument';
+  // Present but disabled without a mapping: the affordance stays discoverable
+  // while the hint above explains how to unlock it (before this, the button
+  // was clickable with no visible effect and corrupted the args state).
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'secondary';
+  add.textContent = '+ Add argument';
+  if (!mappingActive) {
+    add.disabled = true;
+    add.title = 'Add a mapping above first — arguments target its composable parameters.';
+  } else {
     add.onclick = () => {
       ccEditor.args.rows.push({ argument: '', sourceKind: 'constant', value: '' });
       ccTouchArgs();
     };
-    wrap.appendChild(add);
   }
+  wrap.appendChild(add);
   // Register the built field so the mapping input can swap just this field
   // (never the whole editor) when the mapping appears/disappears on typing.
   const field = ccField('Mapping arguments', wrap, 'args');

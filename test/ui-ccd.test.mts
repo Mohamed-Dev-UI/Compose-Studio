@@ -419,10 +419,9 @@ test('CCD visual editor: argument rows are reachable only through a resolved map
   postConfigs(stubWindow, [{ masterId: 'm7', masterName: 'Btn/G', hasConfig: true, config: card }]);
   const host = document.getElementById('configHost') as El;
   assert.equal(findAll(host, 'cc-argrow').length, 0, 'no rows without a mapping');
-  assert.ok(
-    !findAll(host, 'secondary').some((b) => textOf(b) === '+ Add argument'),
-    'no add-argument button without a mapping (it used to appear dead and corrupt args state)',
-  );
+  const addBefore = findAll(host, 'secondary').find((b) => textOf(b) === '+ Add argument');
+  assert.ok(addBefore, 'the add affordance stays visible');
+  assert.equal(addBefore?.disabled, true, 'disabled without a mapping (it used to be clickable and corrupt args state)');
 
   // Typing a mapping is the gate; then the add button appears and works.
   const mappingInput = findFieldControl(host, 'Mapping (app composable)');
@@ -432,6 +431,7 @@ test('CCD visual editor: argument rows are reachable only through a resolved map
     mappingInput.oninput?.();
     const add = findAll(host, 'secondary').find((b) => textOf(b) === '+ Add argument');
     assert.ok(add, 'the add button appears once a mapping is set');
+    assert.equal(add?.disabled, false, 'and it is enabled after the mapping flip');
     (add as El & { onclick: () => void }).onclick();
     assert.equal(findAll(host, 'cc-argrow').length, 1, 'clicking add renders an editable row');
 
