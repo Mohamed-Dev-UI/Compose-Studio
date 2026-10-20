@@ -39,6 +39,9 @@
        so rows line up and reused buttons read as the same component. */
     --ctl-h: 30px;
     --ctl-radius: 7px;
+    /* UA-drawn widget ink (number spinners, checkboxes, autofill) follows the
+       theme; Figma adds figma-dark in dark mode. */
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
@@ -187,14 +190,18 @@
   .field { margin-bottom: 8px; }
   .field:last-child { margin-bottom: 0; }
   .row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
-  input[type=text], textarea, select {
+  /* Theme-scoped UA widgets when Figma switches the scheme. */
+  .figma-dark { color-scheme: dark; }
+
+  input[type=text], input[type=number], textarea, select {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
     border-radius: var(--ctl-radius); padding: 6px 9px;
     font: inherit; min-width: 0; width: 100%;
     transition: border-color 0.15s, box-shadow 0.15s;
     resize: vertical;
   }
-  input[type=text], select { height: var(--ctl-h); padding: 0 9px; }
+  input[type=text], input[type=number], select { height: var(--ctl-h); padding: 0 9px; }
+  input[type=number] { width: 110px; }
   /* Dropdowns: identical surface to text inputs, theme-following chevron. */
   select {
     cursor: pointer; appearance: none; -webkit-appearance: none;
@@ -232,12 +239,11 @@
     border-radius: var(--ctl-radius); height: var(--ctl-h); min-width: 76px;
     padding: 0 13px; font: inherit; font-weight: 600; cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    box-shadow: 0 2px 6px rgba(127, 82, 255, 0.3);
-    transition: transform 0.12s ease, box-shadow 0.15s ease, opacity 0.15s;
+    transition: transform 0.12s ease, opacity 0.15s;
   }
-  button.primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(127, 82, 255, 0.4); }
-  button.primary:active:not(:disabled) { transform: translateY(0); box-shadow: 0 1px 3px rgba(127, 82, 255, 0.3); }
-  button.primary:disabled { opacity: 0.45; cursor: default; box-shadow: none; transform: none; }
+  button.primary:hover:not(:disabled) { transform: translateY(-1px); }
+  button.primary:active:not(:disabled) { transform: translateY(0); }
+  button.primary:disabled { opacity: 0.45; cursor: default; transform: none; }
   button.primary svg, button.secondary svg { width: 12px; height: 12px; }
   button.secondary {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
@@ -581,7 +587,7 @@
     </div>
     <div class="brand-text">
       <h1>Compose Studio</h1>
-      <span class="brand-sub">Figma selection → Jetpack Compose · <span id="buildTag">rev. 32</span></span>
+      <span class="brand-sub">Figma selection → Jetpack Compose · <span id="buildTag">rev. 33</span></span>
     </div>
   </header>
 

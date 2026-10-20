@@ -1,6 +1,6 @@
 # Phase 1 verification report
 
-Date: 2026-10-18 → 2026-10-20 (rev. 32 — control height bump) · Machine:
+Date: 2026-10-18 → 2026-10-20 (rev. 33 — UA-widget theming, glow removal) · Machine:
 Windows (win32) · Node: v24.19.0
 
 Phase-1 scope (per the project brief): extraction → IR v1 → mapping
@@ -59,6 +59,8 @@ this machine in the repository root, `D:\Projects\Compose Studio`.
 
 | rev. 32  | **Control height bump + stale-build diagnosis (user request).** The shared `--ctl-h` token rises 26px → **30px** (Figma-native scale), lifting every button (primary/secondary), text input, select, segmented control and the square icon buttons (`width: var(--ctl-h)`) in one move; small severity/file pills keep their compact 22px deliberately. The user's follow-up screenshot showed the unequal Run row *after a re-run* — precisely the rev. 30 styling — so the brand subtitle now carries a visible build tag (`· rev. N`) to settle at a glance which build Figma's iframe actually executes (Figma dev mode hot-reloads `code.js` but can cache `ui.html` until a full close/reopen, and a manifest imported from a different folder would keep serving old UI entirely). Verified by measurement on the rebuilt harness: `Convert selection` and `Review output` render equal 30px boxes on identical top/bottom edges, all other probed controls land at 30px, the tag renders in the header, and 220/220 tests stay green. |
 
+| rev. 33  | **Number-input + native-widget theming; primary-button glow removed (user report).** (1) The "Minimum occurrences" `type=number` input rendered with a **white UA background** in dark mode — the themed control base covered only `input[type=text]`; text-like inputs are now `input[type=text], input[type=number]` (height tokens inherited; the stepper keeps a compact 110px width). The systemic fix under it: `:root { color-scheme: light }` + `.figma-dark { color-scheme: dark }`, so UA-drawn ink (spinner arrows, checkbox glyphs, autofill) follows the Figma theme from now on — nothing else in the plugin draws native widgets unthemed (the one `type=file` is a hidden import helper, checkboxes ride `accent-color`). (2) The Convert tab's Run row "still looked unequal" on rev. 32: the boxes are equal in measurements, but the primary button's purple **drop-shadow glow** painted ~6px past the box and read as extra height — removed entirely (idle/hover/active), matching Figma's flat button style. (3) The header build tag bumped to `rev. 33`. Verified: 220/220 tests, dark-emulated Settings shows the themed 30×110px stepper (`color-scheme: dark` computed), light Run row renders flush. |
+
 ## Commands and results
 
 | Command                                  | Result |
@@ -76,8 +78,8 @@ Artifact hashes (SHA-256, for traceability):
 
 | File                             | SHA-256                                                                      |
 | -------------------------------- | ------------------------------------------------------------------------------ |
-| `dist/code.js`                    | `6CFDB06BAD3AB59BEC5F22340CE0D4B2AD8AE617A1CF7A6BB09BBDD0BEB71155`              |
-| `dist/ui.html`                    | `11C6F7292B6021F4804F9BC3CD89D26F6C99FEC958B9FB8021F4C339EAE6F657`              |
+| `dist/code.js`                    | `D66AED3A1A22B33B4D3BF0B6F825E271E499E358A4479D5EBD00104BCABD72F4`              |
+| `dist/ui.html`                    | `C2447F45004A8C8D1FA3D2DB414F1BCB8BD043C7994A78061893F079DA0130E3`              |
 | `examples/mapping-profile.json`   | `2B68171BDC8A904EA145E224CCDB3EC1644ADB622F14A7045636C4E579EDA550`              |
 | `publish/icon-128.png`            | `F3689A5F3FA84CA4725E32589690852BB58C08619F360F65215B3F9517F787C4`              |
 | `publish/cover-1920x1080.png`     | `7558345EF7D03220E9864C1DA3F69A1A6058824770CED7686A51CE8A94F1B2C8`              |
