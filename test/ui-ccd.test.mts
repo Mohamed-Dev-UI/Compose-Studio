@@ -150,6 +150,8 @@ type MasterFixture = {
   hasConfig: boolean;
   config: PartialConfig | null;
   issues?: string[];
+  /** The payload's derived app-composable suggestion (null in the real flow for blank names). */
+  suggestedMapping?: string;
 };
 
 function postConfigs(stubWindow: El, masters: MasterFixture[], presets: unknown[] = []): void {
@@ -167,6 +169,7 @@ function postConfigs(stubWindow: El, masters: MasterFixture[], presets: unknown[
       prose: '',
       blockText: null,
       issues: master.issues ?? [],
+      suggestedMapping: master.suggestedMapping ?? null,
       config: master.config ? { ...master.config, tag: 'compose-studio', version: 1 } : null,
     })),
   };
@@ -461,4 +464,121 @@ test('CCD presets: saving an all-defaults snapshot is refused', () => {
     0,
     'no save message for an all-defaults editor (the form stays open)',
   );
+});
+
+test('CCD auto-assign: an empty mapping is seeded with the derived function name and Apply writes it', () => {
+  const { document, stubWindow, posted } = makeDomStub();
+  runUiScript(document, stubWindow, posted);
+  postConfigs(stubWindow, [{ masterId: 'm9', masterName: 'Working Level', hasConfig: false, config: null, suggestedMapping: 'WorkingLevel' }]);
+  const host = document.getElementById('configHost') as El;
+  const mappingInput = findFieldControl(host, 'Mapping (app composable)');
+  assert.ok(mappingInput, 'the mapping control exists');
+  assert.equal(mappingInput?.value, 'WorkingLevel', 'the derived name is pre-filled');
+  const mappingField = findAll(host, 'cc-field').find((f) => {
+    const kids = Array.isArray(f.children) ? f.children : [];
+    const label = kids[0];
+    const span = label && Array.isArray(label.children) ? label.children[0] : undefined;
+    return span && textOf(span).includes('Mapping (app composable');
+  });
+  assert.ok(mappingField, 'the mapping field renders');
+  const mappingKids = mappingField && Array.isArray(mappingField.children) ? mappingField.children : [];
+  assert.ok(
+    mappingKids.some((c) => textOf(c).includes('Auto-filled from the component name')),
+    'a hint explains where the suggestion came from',
+  );
+  // A mapping resolved by the suggestion unlocks the argument editor too.
+  const add = findAll(host, 'secondary').find((b) => textOf(b) === '+ Add argument');
+  assert.equal(add?.disabled, false, 'the suggestion counts as a mapping for the argument gate');
+
+  posted.length = 0;
+  const apply = findApply(host) as El & { onclick: () => void };
+  assert.ok(apply, 'an Apply button exists');
+  apply.onclick();
+  const writes = of(posted, 'set-component-config');
+  assert.equal(writes.length, 1, 'the unconfigured master becomes a write via the suggestion');
+  const config = (writes[0]?.payload as { config?: { mapping?: string; role?: string | null } }).config;
+  assert.equal(config?.mapping, 'WorkingLevel', 'Apply writes the suggested mapping');
+  assert.equal(config?.role, null, 'untouched fields stay at their defaults');
+});
+
+test('CCD auto-assign: an existing mapping is never overwritten by the suggestion', () => {
+  const { document, stubWindow, posted } = makeDomStub();
+  runUiScript(document, stubWindow, posted);
+  const card = blankConfig();
+  card.mapping = 'My.Button';
+  postConfigs(stubWindow, [{ masterId: 'm10', masterName: 'Working Level', hasConfig: true, config: card, suggestedMapping: 'WorkingLevel' }]);
+  const host = document.getElementById('configHost') as El;
+  const mappingInput = findFieldControl(host, 'Mapping (app composable)');
+  assert.equal(mappingInput?.value, 'My.Button', 'the explicit mapping wins');
+  const mappingField = findAll(host, 'cc-field').find((f) => {
+    const kids = Array.isArray(f.children) ? f.children : [];
+    const label = kids[0];
+    const span = label && Array.isArray(label.children) ? label.children[0] : undefined;
+    return span && textOf(span).includes('Mapping (app composable');
+  });
+  const noHintKids = mappingField && Array.isArray(mappingField.children) ? mappingField.children : [];
+  assert.ok(
+    !noHintKids.some((c) => textOf(c).includes('Auto-filled')),
+    'no auto-filled hint for an explicit mapping',
+  );
+});
+
+test('CCD auto-assign: multi-selection seeds per-master names and Apply keeps each own', () => {
+  const { document, stubWindow, posted } = makeDomStub();
+  runUiScript(document, stubWindow, posted);
+  postConfigs(stubWindow, [
+    { masterId: 'm11', masterName: 'Card/A', hasConfig: false, config: null, suggestedMapping: 'CardA' },
+    { masterId: 'm12', masterName: 'Button/B', hasConfig: false, config: null, suggestedMapping: 'ButtonB' },
+  ]);
+  const host = document.getElementById('configHost') as El;
+  const chips = findAll(host, 'cc-mixed-chip');
+  assert.equal(chips.length, 1, 'only the mapping control is mixed');
+  assert.ok(firstText(chips).includes('CardA'), 'the mixed chip lists the first derived name');
+  assert.ok(firstText(chips).includes('ButtonB'), 'the mixed chip lists the other derived name');
+
+  posted.length = 0;
+  const apply = findApply(host) as El & { onclick: () => void };
+  assert.ok(apply, 'an Apply button exists');
+  apply.onclick();
+  const writes = of(posted, 'set-component-config');
+  assert.equal(writes.length, 2, 'both masters are written with their own suggestion');
+  assert.deepEqual(
+    writes.map((message) => ((message.payload as { config?: { mapping?: string } }).config ?? {}).mapping),
+    ['CardA', 'ButtonB'],
+    'each master gets its own derived name',
+  );
+});
+
+test('CCD preset bar: built-in starters are marked, not deletable, and user presets still delete', () => {
+  const { document, stubWindow, posted } = makeDomStub();
+  runUiScript(document, stubWindow, posted);
+  const builtin = { ...blankConfig(), role: 'button' as const };
+  const mine = { ...blankConfig(), role: 'card' as const };
+  postConfigs(stubWindow, [{ masterId: 'm13', masterName: 'Chip/Z', hasConfig: false, config: null }], [
+    { name: 'Mine', config: mine },
+    { name: 'Material Button', config: builtin, builtin: true },
+  ]);
+  const select = document.getElementById('presetSelect') as El & { value: string; onchange?: () => void };
+  const options = Array.isArray(select.children) ? select.children : [];
+  const texts = options.map(textOf);
+  assert.ok(texts.some((t) => t.startsWith('Mine —')), 'the user preset lists plainly');
+  assert.ok(texts.some((t) => t.startsWith('★ Material Button')), 'the built-in is marked with a star');
+
+  // A user preset selects and deletes as before.
+  const del = document.getElementById('presetDeleteBtn') as El & { disabled?: boolean; onclick: () => void };
+  select.value = 'Mine';
+  select.onchange?.();
+  assert.equal(del.disabled, false, 'user presets are deletable');
+  posted.length = 0;
+  del.onclick();
+  assert.equal(of(posted, 'delete-component-preset').length, 1, 'the delete message posts for a user preset');
+
+  // A built-in starter loads but cannot be deleted.
+  select.value = 'Material Button';
+  select.onchange?.();
+  assert.equal(del.disabled, true, 'built-ins are not deletable');
+
+  select.value = '';
+  select.onchange?.();
+  assert.equal(del.disabled, true, 'deselecting gates the button again');
 });

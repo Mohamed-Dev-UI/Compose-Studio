@@ -48,6 +48,7 @@ import type { AssetFormat, AssetFormatOverride, LibraryAsset, MarkCandidate, Nod
 import { markId, matchesIgnorePrefix, matchesMark } from './shared/marks.ts';
 import {
   applyComposeConfigToDescription,
+  BUILTIN_COMPONENT_PRESETS,
   buildComposeConfigBlock,
   COMPOSE_CONFIG_MARKER,
   COMPOSE_CONFIG_TEMPLATE,
@@ -56,6 +57,7 @@ import {
   normalizeComponentConfig,
   parseComposeConfig,
   stripComposeConfig,
+  suggestMappingName,
   type ParsedComponentConfig,
 } from './shared/compose-config.ts';
 import { snakeCase } from './util/identifiers.ts';
@@ -635,7 +637,21 @@ async function persistComponentPresets(): Promise<void> {
     notify('The preset list could not be stored (client storage is unavailable).', true);
     return;
   }
-  postMessage({ type: 'component-presets', payload: { presets: componentPresets } });
+  postMessage({ type: 'component-presets', payload: { presets: mergedComponentPresets() } });
+}
+
+/**
+ * The preset catalog the UI sees: the user's own presets first, then the
+ * shipped starting points (a saved preset with the same name shadows the
+ * built-in, and deleting it brings the built-in back).
+ */
+function mergedComponentPresets(): ComponentConfigPreset[] {
+  const out: ComponentConfigPreset[] = componentPresets.map((preset) => ({ ...preset }));
+  for (const builtin of BUILTIN_COMPONENT_PRESETS) {
+    if (out.some((preset) => preset.name === builtin.name)) continue;
+    out.push({ name: builtin.name, config: { ...builtin.config }, builtin: true });
+  }
+  return out;
 }
 
 /** Saves (or replaces) a named preset built from the visual editor's payload. */
@@ -704,7 +720,7 @@ function componentConfigInfo(masterId: string, masterName: string, nodeNames: st
   } catch {
     issues = ['the component description could not be read'];
   }
-  return { masterId, masterName, nodeNames, hasConfig: blockText !== null, summary, prose, blockText, config, issues };
+  return { masterId, masterName, nodeNames, hasConfig: blockText !== null, summary, prose, blockText, config, issues, suggestedMapping: suggestMappingName(masterName) };
 }
 
 /** Resolves the selection to master components and posts the editor payload. */
@@ -740,7 +756,7 @@ async function postComponentConfigs(): Promise<void> {
   const payload: ComponentConfigsPayload = {
     version: COMPOSE_CONFIG_VERSION,
     template: COMPOSE_CONFIG_TEMPLATE,
-    presets: componentPresets,
+    presets: mergedComponentPresets(),
     masters: [...masters.entries()].map(([masterId, entry]) =>
       componentConfigInfo(masterId, entry.name, entry.nodeNames, entry.description)),
   };

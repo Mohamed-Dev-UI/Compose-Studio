@@ -587,7 +587,7 @@
     </div>
     <div class="brand-text">
       <h1>Compose Studio</h1>
-      <span class="brand-sub">Figma selection → Jetpack Compose · <span id="buildTag">rev. 33</span></span>
+      <span class="brand-sub">Figma selection → Jetpack Compose · <span id="buildTag">rev. 34</span></span>
     </div>
   </header>
 
@@ -1007,7 +1007,7 @@ mappingArgs: title="Sign In", icon=@icon, color=#5551FF, label=@text</div>
           </div>
         </summary>
         <div class="card-body">
-          <p class="hint"><b>Save current…</b> captures exactly what the editor shows (mixed fields keep each component’s own, though a preset stores one merged value — edit what you want, press Apply first if needed). <b>Loading</b> a preset fills every field of the editor; nothing reaches a component until <b>Apply</b>. Presets live in this Figma client’s storage, up to 30, newer saves replacing the oldest ones.</p>
+          <p class="hint"><b>Built-in starters (★)</b> — Material Button / Card / Fab, icon and image assets, and an all-defaults reset — are always in the dropdown as starting points; they cannot be deleted, but saving your own preset under the same name replaces one. <b>Save current…</b> captures exactly what the editor shows (mixed fields keep each component’s own, though a preset stores one merged value — edit what you want, press Apply first if needed). <b>Loading</b> a preset fills every field of the editor; nothing reaches a component until <b>Apply</b>. Presets live in this Figma client’s storage, up to 30, newer saves replacing the oldest ones. The editor also <b>auto-fills the Mapping</b> with a Kotlin function name derived from the component’s name whenever no mapping is set — clear it or type your own before Apply.</p>
         </div>
       </details>
     </section>
@@ -1865,6 +1865,24 @@ function ccValueLabel(key, value) {
  */
 function ccBuildEditor(masters) {
   const state = { multi: masters.length > 1 };
+  // Auto-assign the suggested app-composable name (derived from the master
+  // name) to every component that does not carry a mapping yet: the
+  // suggestion is seeded into the per-master configs, so the untouched-key
+  // apply semantics do exactly the right thing — "keep each master's own"
+  // writes the suggestion, while a typed value still overrides all. Nothing
+  // is written to Figma until Apply.
+  let autoMapped = false;
+  for (const master of masters) {
+    if (!master || !master.suggestedMapping || typeof master.suggestedMapping !== 'string') continue;
+    if (!master.config) {
+      master.config = { role: null, kind: null, assets: 'auto', implementation: 'auto', mapping: master.suggestedMapping, mappingArgs: [], note: null };
+      autoMapped = true;
+    } else if (master.config.mapping == null && master.config.mapping !== '') {
+      master.config = Object.assign({}, master.config, { mapping: master.suggestedMapping });
+      autoMapped = true;
+    }
+  }
+  state.mappingAutoAssigned = autoMapped;
   const buildKey = (pick) => {
     const seen = [];
     for (const master of masters) {
@@ -2155,10 +2173,14 @@ function ccFieldMapping() {
   input.type = 'text';
   input.placeholder = 'e.g. com.example.ui.MyButton';
   input.spellcheck = false;
+  let seeded = false;
   if (ccEditor.mapping.mixed) {
     input.value = '';
     input.placeholder = '(multiple values — type one to override all)';
-  } else input.value = ccEditor.mapping.value || '';
+  } else {
+    input.value = ccEditor.mapping.value || '';
+    seeded = !ccEditor.mapping.touched && !!input.value && !!ccEditor.mappingAutoAssigned;
+  }
   input.oninput = () => {
     if (!ccEditor) return;
     const hadMapping = !!ccDisplayValue('mapping');
@@ -2170,7 +2192,14 @@ function ccFieldMapping() {
     // so the add-argument path appears the moment a mapping is typed.
     if (hadMapping !== !!input.value) ccRefreshArgsField();
   };
-  return ccField('Mapping (app composable)', input, 'mapping');
+  const field = ccField('Mapping (app composable)', input, 'mapping');
+  if (seeded) {
+    const hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent = 'Auto-filled from the component name as a Kotlin function name — edit or clear it, then Apply.';
+    field.appendChild(hint);
+  }
+  return field;
 }
 
 function ccFieldArgs() {
@@ -2449,14 +2478,20 @@ function renderPresetBar() {
     ? 'No presets yet — configure a component and Save current…'
     : ccPresets.length + ' preset(s) — pick one to load';
   select.appendChild(placeholder);
+  let builtinInView = false;
   for (const preset of ccPresets) {
     const opt = document.createElement('option');
     opt.value = preset.name;
-    opt.textContent = preset.name + ' — ' + ccShortSummary(preset.config);
+    // ★ = shipped starting point; saving under the same name shadows it.
+    opt.textContent = (preset.builtin ? '★ ' : '') + preset.name + ' — ' + ccShortSummary(preset.config);
+    if (preset.builtin) builtinInView = true;
     select.appendChild(opt);
   }
   select.value = '';
-  if (del) del.disabled = true;
+  if (del) {
+    del.disabled = true;
+    del.title = '';
+  }
   if (count) {
     count.textContent = String(ccPresets.length);
     count.hidden = ccPresets.length === 0;
@@ -2495,10 +2530,17 @@ function wireComponentPresets() {
   const select = $('presetSelect');
   if (select) {
     select.onchange = () => {
+      const del = $('presetDeleteBtn');
       if (select.value) {
         loadComponentPreset(select.value);
-        const del = $('presetDeleteBtn');
-        if (del) del.disabled = false;
+        if (del) {
+          const preset = ccPresets.find((p) => p.name === select.value);
+          del.disabled = !preset || !!preset.builtin;
+          del.title = preset && preset.builtin ? 'Built-in starters cannot be deleted — save your own under the same name to replace' : '';
+        }
+      } else if (del) {
+        del.disabled = true;
+        del.title = '';
       }
     };
   }

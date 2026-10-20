@@ -527,7 +527,7 @@ once). Instead of editing text, fields are parsed-config controls:
 | Asset kind                   | `none` / `icon` / `image` / `vector` segments |
 | Assets policy                | `auto` / `export` / `code` segments           |
 | Implementation               | `auto` / `custom` (only when the role is `card` / `button` / `fab`) |
-| Mapping                      | text input; mapping arguments get a row editor (name + source + constant value). The rows and the *+ Add argument* button unlock the moment the mapping is set; until then the button renders disabled with a tooltip and a hint explains that a mapping is required |
+| Mapping                      | text input; seeded with a Kotlin function name derived from the component name (`Working Level` → `WorkingLevel`) whenever the component carries no mapping — edit or clear it, nothing is written until **Apply**; mapping arguments get a row editor (name + source + constant value). The rows and the *+ Add argument* button unlock the moment the mapping is set; until then the button renders disabled with a tooltip and a hint explains that a mapping is required |
 | Note                         | free-text area                                |
 
 Actions per editor: **Apply** (writes prose + rendered block per component,
@@ -545,14 +545,20 @@ component's own value on Apply; setting it once overrides it on **all**
 selected components. Untouched-but-shared fields (and per-component parse
 issues listed above the fields) keep applying per component.
 
-**Presets.** *Save current…* captures the values Apply would write (mixed
-fields fall back to the first configured component's value) under a name and
-persists it in Figma client storage (up to 30, same-name saves replace).
-Picking a preset from the dropdown loads its values into the editor fields —
-nothing reaches a component until **Apply**. *Delete* removes the preset.
+**Presets.** The plugin ships built-in starters (marked ★: Material Button /
+Card / Fab, icon and image assets, and an all-defaults reset) so new users
+have starting points without saving anything first. *Save current…* captures
+the values Apply would write (mixed fields fall back to the first configured
+component's value) under a name and persists it in Figma client storage (up
+to 30, same-name saves replace). Picking a preset from the dropdown loads its
+values into the editor fields — nothing reaches a component until **Apply**.
+*Delete* removes the preset; built-in starters cannot be deleted (a save
+under the same name shadows one, and deleting it brings the starter back).
 
 The **Guide** tab documents the block format, roles, Material rules, asset
-directives, mapping sources, mixed-selection semantics and presets. Component
+directives, mapping sources, mixed-selection semantics and presets (including
+the shipped starters and the mapping auto-suggestion, which is a starting
+point only — Apply is what writes). Component
 *sets* are still not edited — select a variant master or the master component
 itself instead. Figma's known description-display lag applies to UI writes
 exactly as to manual edits — the block applies immediately at generation

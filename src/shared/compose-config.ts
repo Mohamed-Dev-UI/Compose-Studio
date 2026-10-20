@@ -20,6 +20,8 @@
  * generator and unit tests can share it.
  */
 
+import { pascalCase, safeIdentifier } from '../util/identifiers.ts';
+
 export const COMPOSE_CONFIG_TAG = 'compose-studio';
 /** Marker line that starts the configuration block (must be alone on a line). */
 export const COMPOSE_CONFIG_MARKER = `${COMPOSE_CONFIG_TAG}:`;
@@ -636,3 +638,56 @@ export function composeConfigSignature(config: ParsedComponentConfig): string {
     config.note ?? '',
   ].join('~');
 }
+
+/**
+ * Suggests the app-composable name a component's mapping should point at,
+ * derived from the master component name ("Working Level" -> `WorkingLevel`,
+ * "Primary=large" -> `PrimaryLarge`). Returns `null` when the name carries
+ * nothing usable. It is only a starting point for the Config editor: the
+ * suggestion is applied (written into the block) when the user hits Apply,
+ * and can be edited or cleared first.
+ */
+export function suggestMappingName(masterName: string): string | null {
+  const raw = typeof masterName === 'string' ? masterName : '';
+  if (raw.trim() === '') return null;
+  return safeIdentifier(pascalCase(raw));
+}
+
+/** A shipped starting-point preset (merged under the user's own presets). */
+export type BuiltinComponentPreset = {
+  name: string;
+  config: ParsedComponentConfig;
+};
+
+/** One all-defaults builder for the shipped presets. */
+function builtinConfig(
+  overrides: Partial<Pick<ParsedComponentConfig, 'role' | 'kind' | 'assets' | 'implementation' | 'mapping' | 'note' | 'mappingArgs'>>,
+): ParsedComponentConfig {
+  return {
+    tag: COMPOSE_CONFIG_TAG,
+    version: COMPOSE_CONFIG_VERSION,
+    role: overrides.role ?? null,
+    kind: overrides.kind ?? null,
+    assets: overrides.assets || 'auto',
+    implementation: overrides.implementation || 'auto',
+    mapping: overrides.mapping ?? null,
+    note: overrides.note ?? null,
+    mappingArgs: overrides.mappingArgs ?? [],
+  };
+}
+
+/**
+ * Pre-made presets the Config tab offers out of the box, so a new user has
+ * starting points without saving anything first. The plugin merges them
+ * under the user's own presets; saving a preset with the same name shadows
+ * the built-in (and deleting it again brings the built-in back).
+ */
+export const BUILTIN_COMPONENT_PRESETS: readonly BuiltinComponentPreset[] = [
+  { name: 'Material Button', config: builtinConfig({ role: 'button' }) },
+  { name: 'Material Card', config: builtinConfig({ role: 'card' }) },
+  { name: 'Material Fab', config: builtinConfig({ role: 'fab' }) },
+  { name: 'Icon — export as asset', config: builtinConfig({ kind: 'icon', assets: 'export' }) },
+  { name: 'Icon — keep as code', config: builtinConfig({ kind: 'icon', assets: 'code' }) },
+  { name: 'Image — export as asset', config: builtinConfig({ kind: 'image', assets: 'export' }) },
+  { name: 'Defaults — remove config', config: builtinConfig({}) },
+];

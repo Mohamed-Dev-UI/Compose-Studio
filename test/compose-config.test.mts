@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   applyComposeConfigToDescription,
   buildComposeConfigBlock,
+  BUILTIN_COMPONENT_PRESETS,
   COMPOSE_CONFIG_TEMPLATE,
   normalizeComponentConfig,
   parseComposeConfig,
@@ -11,6 +12,7 @@ import {
   stripComposeConfig,
   composeConfigSignature,
   describeComposeConfig,
+  suggestMappingName,
   type ParsedComponentConfig,
 } from '../src/shared/compose-config.ts';
 
@@ -287,4 +289,33 @@ test('normalizeComponentConfig round-trips through the block builder like a pars
   assert.equal(blanks.config.role, null);
   assert.equal(blanks.config.kind, null);
   assert.equal(blanks.config.note, null);
+});
+
+test('suggestMappingName derives a Kotlin function name from the master name', () => {
+  assert.equal(suggestMappingName('Working Level'), 'WorkingLevel');
+  assert.equal(suggestMappingName('Button/B'), 'ButtonB');
+  assert.equal(suggestMappingName('Primary=large'), 'PrimaryLarge');
+  assert.equal(suggestMappingName('3 dots'), 'X3Dots');
+  assert.equal(suggestMappingName('### '), 'X', 'a symbol-only name falls back to X');
+  assert.equal(suggestMappingName('when'), 'When', 'capitalized keywords are legal Kotlin function names');
+  assert.equal(suggestMappingName('   '), null, 'a blank name suggests nothing');
+});
+
+test('built-in presets are clean named configs (unique, normalizable, short)', () => {
+  const seen = new Set<string>();
+  for (const preset of BUILTIN_COMPONENT_PRESETS) {
+    assert.ok(preset.name.trim().length >= 1 && preset.name.length <= 48, `name in range: ${preset.name}`);
+    assert.ok(!seen.has(preset.name), `unique: ${preset.name}`);
+    seen.add(preset.name);
+    const { config, issues } = normalizeComponentConfig(JSON.parse(JSON.stringify(preset.config)));
+    assert.deepEqual(issues, [], `preset '${preset.name}' parses clean`);
+    assert.equal(config.tag, 'compose-studio');
+    assert.equal(config.version, 1);
+  }
+  const roles = new Set(BUILTIN_COMPONENT_PRESETS.filter((p) => p.config.role).map((p) => p.config.role));
+  assert.deepEqual([...roles], ['button', 'card', 'fab'], 'the Material starting points are offered');
+  const kinds = BUILTIN_COMPONENT_PRESETS.filter((p) => p.config.kind).map((p) => p.config.kind);
+  assert.ok(kinds.includes('icon') && kinds.includes('image'), 'asset starting points offered for icons and images');
+  const reset = BUILTIN_COMPONENT_PRESETS.find((p) => p.config.role === null && p.config.kind === null);
+  assert.ok(reset, 'an all-defaults reset starter exists');
 });

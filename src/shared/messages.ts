@@ -281,6 +281,12 @@ export type ComponentConfigInfo = {
   config: ParsedComponentConfig | null;
   /** Parse problems (unknown keys, invalid values); empty when fine. */
   issues: string[];
+  /**
+   * Suggested app-composable name derived from the master name
+   * (e.g. `WorkingLevel`); the Config editor seeds an empty mapping with it
+   * until the user edits or applies.
+   */
+  suggestedMapping: string | null;
 };
 
 /** A named, reusable component configuration (persisted in client storage). */
@@ -289,6 +295,8 @@ export type ComponentConfigPreset = {
   name: string;
   /** The configuration values. */
   config: ParsedComponentConfig;
+  /** True for the shipped starting points (not deletable, shadowed by saved ones). */
+  builtin?: boolean;
 };
 
 export type ComponentConfigsPayload = {
