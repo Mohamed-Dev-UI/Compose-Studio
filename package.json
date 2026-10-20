@@ -1,20 +1,27 @@
 {
-  "name": "Compose-Studio",
-  "version": "1.0.0",
-  "description": "Your Figma Plugin",
-  "main": "code.js",
+  "name": "compose-studio",
+  "version": "0.1.0",
+  "description": "Figma plugin that converts Figma designs into idiomatic Jetpack Compose code (local, deterministic, no AI/network).",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "watch": "npm run build -- --watch"
+    "build": "tsc --noEmit && node scripts/build.mjs",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "watch:plugin": "node scripts/build.mjs --watch",
+    "test": "node --experimental-strip-types --no-warnings --test \"test/**/*.test.mts\"",
+    "test:watch": "npm test -- --watch",
+    "lint": "eslint ."
   },
-  "author": "",
-  "license": "",
+  "engines": {
+    "node": ">=20"
+  },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@figma/eslint-plugin-figma-plugins": "*",
     "@figma/plugin-typings": "*",
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.25.0",
     "eslint": "^9.39.4",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.57.1"

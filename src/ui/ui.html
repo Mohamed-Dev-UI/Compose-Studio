@@ -1,0 +1,3525 @@
+<!doctype html>
+<!--
+  Compose Studio plugin UI (runs in the Figma plugin iframe).
+
+  Self-contained: no network requests, no external fonts/scripts. Communicates
+  with the plugin sandbox exclusively through `postMessage` per
+  src/shared/messages.ts. ZIP export is a small dependency-free "store"
+  (uncompressed) ZIP writer below.
+
+  Layout: five tabs (Convert / Mappings / Assets & Ignore / Output / Settings)
+  driven by [data-tab] buttons; panels are #page-<name>. The bottom bar
+  (selection re-check + last run) is always visible.
+-->
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  /* ------------------------------------------------------------------ */
+  /* Design tokens: Figma theme variables for base colors (auto light/  */
+  /* dark), fixed accents for the brand.                                */
+  /* ------------------------------------------------------------------ */
+  :root {
+    --bg: var(--figma-color-bg, #ffffff);
+    --bg2: var(--figma-color-bg-secondary, #f5f5f5);
+    --bg3: var(--figma-color-bg-tertiary, #e5e5e5);
+    --text: var(--figma-color-text, #333333);
+    --text2: var(--figma-color-text-secondary, #666666);
+    --border: var(--figma-color-border, #e0e0e0);
+    --brand: var(--figma-color-brand-primary, #18a0fb);
+    --danger: #f24822;
+    --warn: #f5a623;
+    --ok: #14ae5c;
+    --accent: #7f52ff;
+    --accent-2: #18a0fb;
+    --grad: linear-gradient(135deg, #6a3de8 0%, #7f52ff 52%, #18a0fb 130%);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+    --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.14);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 11px/1.45 Inter, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 5px; border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text2); }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* ------------------------------ header ---------------------------- */
+  .app-header {
+    display: flex; align-items: center; gap: 9px;
+    padding: 10px 14px 9px;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+    flex: none;
+  }
+  .logo {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: var(--grad);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 8px rgba(127, 82, 255, 0.35);
+    flex: none;
+  }
+  .logo svg { width: 17px; height: 17px; }
+  .brand-text { flex: 1; min-width: 0; }
+  .brand-text h1 { font-size: 12.5px; font-weight: 700; margin: 0; letter-spacing: 0.01em; }
+  .brand-sub { display: block; font-size: 9.5px; color: var(--text2); letter-spacing: 0.02em; }
+  .icon-btn {
+    background: none; border: 1px solid transparent; color: var(--text2);
+    border-radius: 7px; width: 26px; height: 26px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; transition: background 0.15s, color 0.15s;
+    flex: none;
+  }
+  .icon-btn:hover { background: var(--bg3); color: var(--text); }
+
+  /* ------------------------------ tabs ------------------------------ */
+  .tabbar {
+    display: flex; gap: 2px; padding: 5px 8px 0;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+    flex: none; position: relative;
+  }
+  .tab {
+    appearance: none; background: none; border: none; cursor: pointer;
+    font: inherit; font-weight: 500; color: var(--text2);
+    padding: 7px 9px 9px; border-radius: 7px 7px 0 0;
+    display: inline-flex; align-items: center; gap: 5px;
+    position: relative; transition: color 0.15s, background 0.15s;
+    white-space: nowrap;
+  }
+  .tab svg { width: 12px; height: 12px; opacity: 0.75; }
+  .tab:hover { color: var(--text); background: var(--bg2); }
+  .tab.active { color: var(--text); font-weight: 600; }
+  .tab.active svg { opacity: 1; }
+  .tab::after {
+    content: ''; position: absolute; left: 8px; right: 8px; bottom: 0; height: 2.5px;
+    border-radius: 2px 2px 0 0; background: var(--grad);
+    transform: scaleX(0); transform-origin: center; opacity: 0;
+    transition: transform 0.18s ease, opacity 0.18s ease;
+  }
+  .tab.active::after { transform: scaleX(1); opacity: 1; }
+  .tab-badge {
+    min-width: 16px; height: 15px; padding: 0 5px; border-radius: 8px;
+    background: var(--accent); color: #fff; font-size: 9.5px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+    line-height: 1;
+  }
+  @keyframes badgepop { 0% { transform: scale(0.5); } 60% { transform: scale(1.18); } 100% { transform: scale(1); } }
+  .tab-badge.pulse { animation: badgepop 0.35s ease; }
+
+  /* ------------------------------ main ------------------------------ */
+  main {
+    flex: 1; overflow-y: auto; padding: 12px 14px 14px;
+    scroll-behavior: smooth;
+  }
+  .tabpanel { display: none; }
+  .tabpanel.active { display: block; animation: fadeup 0.2s ease; }
+  @keyframes fadeup { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  .intro {
+    display: flex; gap: 9px; align-items: flex-start;
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; margin-bottom: 10px;
+  }
+  .intro .intro-icon { color: var(--accent); flex: none; margin-top: 1px; }
+  .intro p { margin: 0; color: var(--text2); font-size: 10.8px; line-height: 1.45; }
+  .intro b, .intro strong { color: var(--text); font-weight: 600; }
+
+  /* ------------------------------ cards ----------------------------- */
+  .card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+    margin-bottom: 10px; overflow: hidden; transition: border-color 0.15s;
+  }
+  .card:hover { border-color: var(--text2); }
+  .card-head { display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px; }
+  .card-icon {
+    width: 26px; height: 26px; border-radius: 8px; flex: none; margin-top: 1px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(127, 82, 255, 0.14); color: #8a5cf6;
+  }
+  .card-icon svg { width: 14px; height: 14px; }
+  .card.tone-ok .card-icon, .card-icon.tone-ok { background: rgba(20, 174, 92, 0.14); color: #14ae5c; }
+  .card.tone-warn .card-icon, .card-icon.tone-warn { background: rgba(245, 166, 35, 0.16); color: #d98c0f; }
+  .card.tone-info .card-icon, .card-icon.tone-info { background: rgba(24, 160, 251, 0.14); color: #18a0fb; }
+  .card.tone-danger .card-icon, .card-icon.tone-danger { background: rgba(242, 72, 34, 0.13); color: #f24822; }
+  .card-titles { flex: 1; min-width: 0; }
+  .card-titles h3 { font-size: 12px; font-weight: 600; margin: 0; display: flex; align-items: center; gap: 6px; }
+  .card-titles p { margin: 1px 0 0; font-size: 10.5px; color: var(--text2); line-height: 1.4; }
+  .card-body { padding: 9px 12px 11px; }
+  .count-badge {
+    min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px;
+    background: var(--bg3); color: var(--text2); font-size: 9.5px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+  }
+  .count-badge.hot { background: var(--accent); color: #fff; }
+
+  /* collapsible cards */
+  details.card > summary {
+    cursor: pointer; list-style: none; user-select: none;
+  }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary .chev { margin-left: auto; transition: transform 0.18s ease; color: var(--text2); }
+  details.card[open] > summary .chev { transform: rotate(90deg); }
+  details.card > .card-body { border-top: 1px solid var(--border); padding-top: 10px; }
+
+  /* --------------------------- form controls ------------------------ */
+  .field { margin-bottom: 8px; }
+  .field:last-child { margin-bottom: 0; }
+  .row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+  input[type=text], select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 7px; padding: 5.5px 9px; font: inherit; min-width: 0; width: 100%;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  select { cursor: pointer; }
+  input[type=text]:focus, select:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(127, 82, 255, 0.18);
+  }
+  .hint { font-size: 10px; color: var(--text2); margin-top: 3px; line-height: 1.4; }
+  .hint code, .asset-note code, code.inline {
+    background: var(--bg3); border-radius: 3px; padding: 0 4px;
+    font: 9.5px/1.6 SFMono-Regular, Consolas, monospace;
+  }
+  .example-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 2px 8px; margin: 2px 2px 0 0; font-size: 9.5px; color: var(--text2);
+  }
+  .example-pill b { color: var(--accent); font-weight: 700; }
+
+  /* ------------------------------ buttons --------------------------- */
+  button.primary {
+    background: var(--grad); color: #fff; border: none; border-radius: 8px;
+    padding: 8px 15px; font: inherit; font-weight: 600; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    box-shadow: 0 2px 6px rgba(127, 82, 255, 0.3);
+    transition: transform 0.12s ease, box-shadow 0.15s ease, opacity 0.15s;
+  }
+  button.primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(127, 82, 255, 0.4); }
+  button.primary:active:not(:disabled) { transform: translateY(0); box-shadow: 0 1px 3px rgba(127, 82, 255, 0.3); }
+  button.primary:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+  button.primary svg, button.secondary svg { width: 12px; height: 12px; }
+  button.secondary {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 7px; padding: 5.5px 11px; font: inherit; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; font-weight: 500;
+    transition: background 0.15s, border-color 0.15s, transform 0.12s;
+  }
+  button.secondary:hover { background: var(--bg3); border-color: var(--text2); }
+  button.secondary:active { transform: scale(0.98); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1.5px; }
+  .btn-block { width: 100%; }
+  .btn-danger-ghost { border-color: transparent; color: var(--text2); }
+  .btn-danger-ghost:hover { border-color: var(--danger); color: var(--danger); background: rgba(242, 72, 34, 0.08); }
+
+  /* --------------------------- segmented ---------------------------- */
+  .segmented {
+    display: flex; gap: 3px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 3px;
+  }
+  .seg-btn {
+    flex: 1; appearance: none; border: none; background: transparent; color: var(--text2);
+    font: inherit; font-weight: 500; cursor: pointer; padding: 6px 8px;
+    border-radius: 6px; transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    text-align: center; white-space: nowrap;
+  }
+  .seg-btn:hover { color: var(--text); }
+  .seg-btn.active {
+    background: var(--accent); color: #fff; font-weight: 600;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  }
+
+  /* --------------------------- status pill -------------------------- */
+  .status {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 10.8px; color: var(--text2); line-height: 1.4;
+    min-height: 15px;
+  }
+  .status::before {
+    content: ''; width: 7px; height: 7px; border-radius: 50%; flex: none;
+    background: var(--bg3);
+  }
+  .status.ok::before { background: var(--ok); box-shadow: 0 0 0 3px rgba(20, 174, 92, 0.18); }
+  .status.err { color: var(--danger); }
+  .status.err::before { background: var(--danger); box-shadow: 0 0 0 3px rgba(242, 72, 34, 0.18); }
+  .status.busy::before {
+    width: 9px; height: 9px; border-radius: 50%;
+    border: 2px solid rgba(127, 82, 255, 0.25); border-top-color: var(--accent);
+    animation: spin 0.7s linear infinite; box-shadow: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* -------------------------- selection list ------------------------ */
+  .node-row {
+    display: flex; align-items: center; gap: 7px;
+    padding: 5px 8px; margin-bottom: 4px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .node-row:hover { border-color: var(--text2); }
+  .node-row .node-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    border-radius: 5px; padding: 1.5px 6px; font-size: 9.5px; font-weight: 600;
+    background: var(--bg3); color: var(--text2);
+    letter-spacing: 0.02em; flex: none;
+  }
+  .tag.kind { color: #fff; border: none; background: #88909b; }
+  .tag.k-DEFAULT { background: #88909b; }
+  .tag.k-TEXT { background: #18a0fb; }
+  .tag.k-FRAME { background: #7f52ff; }
+  .tag.k-RECTANGLE { background: #d2599c; }
+  .tag.k-ELLIPSE { background: #d2599c; }
+  .tag.k-VECTOR, .tag.k-BOOLEAN_OPERATION, .tag.k-LINE, .tag.k-POLYGON, .tag.k-STAR { background: #d2599c; }
+  .tag.k-GROUP { background: #14ae5c; }
+  .tag.k-INSTANCE { background: #f5a623; }
+  .tag.k-COMPONENT { background: #57adff; }
+  .tag.k-SECTION { background: #14ae5c; }
+  .tag.k-SVG { background: #8a5cf6; }
+  .tag.k-PNG { background: #14ae5c; }
+  .skipped-note { color: var(--warn); font-size: 9.5px; flex: none; }
+  .more-note { color: var(--text2); font-size: 10px; padding: 2px 8px; }
+
+  /* ------------------------------ empty ----------------------------- */
+  .empty {
+    border: 1.5px dashed var(--border); border-radius: 9px;
+    padding: 16px 12px; text-align: center; color: var(--text2);
+    font-size: 10.8px; line-height: 1.5;
+  }
+  .empty .empty-icon { display: block; margin: 0 auto 6px; width: 22px; height: 22px; opacity: 0.6; }
+  .empty.clean { border-color: rgba(20, 174, 92, 0.4); color: var(--text2); }
+  .empty.clean .empty-icon { color: var(--ok); opacity: 1; }
+
+  /* --------------------------- assets preview ----------------------- */
+  .asset-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 7px; max-height: 320px; overflow-y: auto; overflow-x: hidden;
+    padding: 2px;
+  }
+  .asset-tile {
+    border: 1px solid var(--border); border-radius: 9px; background: var(--bg2);
+    padding: 7px 6px 6px; display: flex; flex-direction: column; align-items: center;
+    gap: 3px; min-width: 0; position: relative;
+  }
+  .asset-tile.selectable { cursor: pointer; }
+  .asset-tile.selectable:hover { border-color: var(--brand); }
+  .asset-tile.pinned { opacity: 0.55; }
+  .tile-check {
+    position: absolute; top: 5px; right: 5px;
+    background: rgba(255, 255, 255, 0.92); border-radius: 4px; padding: 1.5px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  }
+  .asset-tile.pinned .tile-check { cursor: not-allowed; }
+  .asset-thumb {
+    width: 56px; height: 48px; display: flex; align-items: center; justify-content: center;
+    border-radius: 6px; background: var(--bg3);
+    /* checkerboard hints at transparency inside rasters */
+    background-image: linear-gradient(45deg, rgba(127, 82, 255, 0.06) 25%, transparent 25%, transparent 75%, rgba(127, 82, 255, 0.06) 75%),
+      linear-gradient(45deg, rgba(127, 82, 255, 0.06) 25%, transparent 25%, transparent 75%, rgba(127, 82, 255, 0.06) 75%);
+    background-size: 8px 8px; background-position: 0 0, 4px 4px;
+  }
+  .asset-thumb svg { max-width: 40px; max-height: 40px; }
+  .asset-thumb img { max-width: 40px; max-height: 40px; object-fit: contain; }
+  .asset-name {
+    font-size: 10px; font-weight: 600; max-width: 100%;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .asset-tag {
+    font-size: 8.6px; font-weight: 600; letter-spacing: 0.02em;
+    color: var(--text2); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 8px; padding: 1px 6px;
+  }
+  .asset-tile.t-ImageVector .asset-tag { color: var(--accent); border-color: rgba(127, 82, 255, 0.45); }
+  .asset-more { grid-column: 1 / -1; text-align: center; color: var(--text2); font-size: 10px; padding: 4px 0 2px; }
+
+  /* Content-driven height caps: long lists scroll internally so a card can
+   * never push the rest of the tab out of reach. overflow-x is hidden on
+   * purpose — only the vertical axis is useful here, and wrapping below */
+  #selection, #ignoreMarksList, #assetSkipList, #libraryList, #diagList { overflow-y: auto; overflow-x: hidden; }
+  #selection, #ignoreMarksList, #assetSkipList, #libraryList { max-height: 220px; }
+  #diagList { max-height: 380px; }
+  details.card > .card-body[data-map] { max-height: 320px; overflow-y: auto; overflow-x: hidden; }
+
+  /* --------------------------- diagnostics -------------------------- */
+  .diag-chips { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; }
+  .diag-chips .push { margin-left: auto; }
+  button.sevchip svg {
+    width: 10px; height: 10px; vertical-align: -1.5px; margin-right: 4px;
+  }
+  button.sevchip {
+    appearance: none; font: inherit; font-size: 10px; font-weight: 600; cursor: pointer;
+    padding: 3.5px 9px; border-radius: 20px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text2);
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+  }
+  button.sevchip:hover { border-color: var(--text2); }
+  button.sevchip.active { border-color: var(--accent); color: var(--accent); background: rgba(127, 82, 255, 0.08); }
+  button.sevchip .n { font-weight: 700; }
+  button.sevchip.c-error { --sev: #f24822; }
+  button.sevchip.c-warning { --sev: #f5a623; }
+  button.sevchip.c-info { --sev: #18a0fb; }
+  button.sevchip.c-error.active { border-color: var(--danger); color: var(--danger); background: rgba(242, 72, 34, 0.08); }
+  button.sevchip.c-warning.active { border-color: var(--warn); color: #d98c0f; background: rgba(245, 166, 35, 0.1); }
+  button.sevchip.c-info.active { border-color: var(--brand); color: var(--brand); background: rgba(24, 160, 251, 0.08); }
+  .diag {
+    display: flex; gap: 8px; align-items: flex-start;
+    background: var(--bg); border: 1px solid var(--border); border-left-width: 3px;
+    border-radius: 8px; padding: 7px 9px; margin-bottom: 5px; font-size: 10.6px;
+    transition: border-color 0.15s;
+  }
+  .diag:hover { border-color: var(--text2); }
+  .diag .sev-icon { flex: none; width: 13px; height: 13px; margin-top: 1px; }
+  /* Long unbreakable tokens (node names, code snippets) must wrap or they
+   * widen the flex row and cause the container to scroll sideways. */
+  .diag .diag-text { flex: 1; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+  .diag.error { border-left-color: var(--danger); } .diag.error .sev-icon { color: var(--danger); }
+  .diag.warning { border-left-color: var(--warn); } .diag.warning .sev-icon { color: var(--warn); }
+  .diag.info { border-left-color: var(--brand); } .diag.info .sev-icon { color: var(--brand); }
+  .diag .meta { color: var(--text2); font-size: 10px; }
+
+  /* ------------------------------ files ----------------------------- */
+  .filebar { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  .filepill-wrap { display: inline-flex; align-items: center; gap: 5px; }
+  .pill-check { width: 12px; height: 12px; }
+  button.filepill {
+    appearance: none; font: 10px/1.4 SFMono-Regular, Consolas, monospace; cursor: pointer;
+    padding: 4.5px 10px; border-radius: 7px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text2);
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+  }
+  button.filepill:hover { border-color: var(--text2); color: var(--text); }
+  button.filepill.active { border-color: var(--accent); color: var(--accent); background: rgba(127, 82, 255, 0.08); font-weight: 600; }
+  .preview-head {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 5px;
+  }
+  .preview-head .file-name {
+    font: 10px/1.5 SFMono-Regular, Consolas, monospace; color: var(--text2); flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  pre#codePreview {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 9px;
+    padding: 11px 12px; overflow: auto; max-height: 340px;
+    font: 10.5px/1.55 SFMono-Regular, Consolas, monospace;
+    margin: 0; white-space: pre; tab-size: 4;
+  }
+  .tok-str { color: #17803d; } .tok-kw { color: #af26a3; } .tok-ann { color: #b26a00; }
+  .tok-num { color: #1a5fb4; } .tok-cmt { color: var(--text2); font-style: italic; }
+
+  /* --------------------------- mark + row lists -------------------- */
+  .markrow {
+    display: flex; align-items: center; gap: 7px;
+    padding: 5.5px 8px; margin-bottom: 4px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    transition: border-color 0.15s;
+  }
+  .markrow:hover { border-color: var(--text2); }
+  .markrow .mark-name {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .markrow .mark-sub { color: var(--text2); font-size: 9.5px; flex: none; }
+  .markrow .del, .maprow .del {
+    appearance: none; background: none; border: none; color: var(--text2);
+    cursor: pointer; padding: 1px 3px; font-size: 12px; line-height: 1;
+    border-radius: 5px; flex: none; transition: color 0.15s, background 0.15s;
+  }
+  /* Component configuration editors (CCD). */
+  .config-item { border: 1px solid var(--border); border-radius: 7px; padding: 7px 8px 8px; margin-bottom: 7px; }
+  .config-item .config-head { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+  .config-item .config-name { font-weight: 600; font-size: 11.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .config-item .config-summary { font-size: 10px; color: var(--text2); margin: 0 0 5px; line-height: 1.4; }
+  .config-item .config-issues { color: var(--warn); font-size: 9.5px; margin: 0 0 5px; line-height: 1.4; }
+  .config-actions { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+  .config-actions button.secondary { flex: none; font-size: 10px; padding: 4px 9px; }
+  .config-actions .config-filler { flex: 1; }
+  /* Visual configuration editor fields (CCD rev. 29). */
+  .cc-field { margin-top: 8px; }
+  .cc-label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 9.5px; font-weight: 600; color: var(--text2);
+    letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 3px;
+  }
+  .cc-mixed-chip {
+    appearance: none; border: 1px dashed var(--border); background: var(--bg2);
+    color: var(--text2); font: inherit; font-size: 9px; font-weight: 600;
+    border-radius: 8px; padding: 1px 7px; cursor: default; letter-spacing: 0; text-transform: none;
+    max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cc-field .segmented { padding: 2px; }
+  .cc-field .seg-btn { padding: 4px 6px; font-size: 10.5px; }
+  .cc-grid { display: grid; grid-template-columns: 1fr; gap: 0; }
+  .cc-argrow { display: grid; grid-template-columns: 96px 88px 1fr 20px; gap: 5px; margin-bottom: 5px; align-items: center; }
+  .cc-argrow input[type="text"], .cc-argrow select { padding: 4px 7px; font-size: 10.5px; }
+  .cc-argrow .del {
+    appearance: none; border: none; background: none; color: var(--text2);
+    cursor: pointer; padding: 1px 3px; font-size: 12px; line-height: 1;
+    border-radius: 5px; flex: none; transition: color 0.15s, background 0.15s;
+  }
+  .cc-argrow .del:hover { color: var(--danger); background: rgba(242, 72, 34, 0.09); }
+  .cc-argsummary { color: var(--text2); font-size: 10px; line-height: 1.45; margin: 2px 0 4px; }
+  .cc-glossary { margin: 4px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
+  .cc-glossary dt { font-weight: 600; font-size: 10.5px; color: var(--accent); white-space: nowrap; }
+  .cc-glossary dd { margin: 0; font-size: 10px; color: var(--text2); line-height: 1.5; }
+  .cc-code {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 7px;
+    padding: 7px 9px; margin: 6px 0 2px; overflow-x: auto;
+    font: 10px/1.55 SFMono-Regular, Consolas, monospace; color: var(--text);
+    white-space: pre;
+  }
+  .config-item textarea.config-advanced {
+    width: 100%; box-sizing: border-box; resize: vertical; min-height: 92px;
+    font: 10px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--text); background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 7px; margin-top: 6px;
+  }
+  .config-item textarea.config-advanced:focus { outline: none; border-color: var(--accent, #57adff); }
+  .config-item details.config-advanced { margin-top: 7px; }
+  .config-item details.config-advanced > summary {
+    cursor: pointer; font-size: 10px; color: var(--text2); user-select: none;
+    padding: 2px 0; list-style-position: inside;
+  }
+  .config-item details.config-advanced > summary:hover { color: var(--text); }
+  .markrow .del:hover, .maprow .del:hover { color: var(--danger); background: rgba(242, 72, 34, 0.09); }
+  .maprow { display: grid; grid-template-columns: 1fr 1fr 20px; gap: 6px; margin-bottom: 5px; align-items: center; }
+  .drawable-code {
+    flex: 0 1 auto; min-width: 0;
+    font: 9.5px/1.6 SFMono-Regular, Consolas, monospace; color: var(--text2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .asset-note { color: var(--text2); font-size: 10px; margin-top: 6px; line-height: 1.45; }
+  .fmt-select {
+    appearance: none; font: 9.5px Inter, system-ui, sans-serif; font-weight: 600;
+    color: var(--text2); background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 7px; padding: 2px 14px 2px 7px; max-width: 108px; flex: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--text2) 50%), linear-gradient(135deg, var(--text2) 50%, transparent 50%);
+    background-position: right 8px center, right 4px center; background-size: 4px 4px; background-repeat: no-repeat;
+    cursor: pointer; transition: border-color 0.15s;
+  }
+  .fmt-select:hover, .fmt-select:focus { border-color: var(--accent); color: var(--text); }
+
+  /* --------------------- export panel (Output tab) -------------------- */
+  .export-presets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .export-master {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 11.5px; font-weight: 600; cursor: pointer;
+  }
+  .export-master input[type="checkbox"], .pill-check, .tile-check {
+    accent-color: var(--brand); width: 13px; height: 13px; cursor: pointer; flex: none; margin: 0;
+  }
+  .export-master .hint { font-weight: 400; }
+  .export-master .group-name { font-weight: 700; color: var(--text); font-size: 12px; }
+  .asset-group-label { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); }
+
+  /* ------------------------------- footer --------------------------- */
+  .bar-bottom {
+    flex: none; display: flex; gap: 8px; align-items: center;
+    border-top: 1px solid var(--border); padding: 8px 14px;
+    background: var(--bg);
+  }
+  .lastrun { color: var(--text2); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .flex { flex: 1; }
+</style>
+</head>
+<body>
+  <header class="app-header">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="3" y="3" width="13" height="13" rx="3.2" fill="#ffffff" fill-opacity="0.42"/>
+        <rect x="8" y="8" width="13" height="13" rx="3.2" fill="#ffffff"/>
+      </svg>
+    </div>
+    <div class="brand-text">
+      <h1>Compose Studio</h1>
+      <span class="brand-sub">Figma selection → Jetpack Compose</span>
+    </div>
+    <button class="icon-btn" id="closeBtn" title="Close the plugin">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" width="13" height="13"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+
+  <nav class="tabbar" id="tabbar" role="tablist">
+    <button class="tab active" data-tab="convert" title="Selection, conversion mode, run">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.5 2.5 5 13.8h5.2L9 21.5l8.6-11.3h-5.3l1.2-7.7z"/></svg>
+      Convert
+    </button>
+    <button class="tab" data-tab="mappings" title="Map Figma values to your design system">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h13M20 17h0.01"/><circle cx="16" cy="7" r="2.2"/><circle cx="9.5" cy="12" r="2.2"/><circle cx="18.2" cy="17" r="2.2"/></svg>
+      Mappings
+    </button>
+    <button class="tab" data-tab="config" title="Visual editor for component configurations (role, assets, mapping)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.2"/><circle cx="16" cy="16" r="3.2"/><path d="M11.2 8H18M21 12.8V16M16 19.2h-3.2M8 11.2v5H4.2M13 13l1.5 1.5M13 19l1.5-1.5M8 4.8H13"/></svg>
+      Config
+      <span class="tab-badge" id="configBadge" hidden></span>
+    </button>
+    <button class="tab" data-tab="guide" title="How component configuration descriptions work">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 6.5C10.5 5 8.3 4.5 5.5 4.7v13.6c2.8-.2 5 .3 6.5 1.7 1.5-1.4 3.7-1.9 6.5-1.7V4.7c-2.8-.2-5 .3-6.5 1.8z"/><path d="M12 6.5V20"/></svg>
+      Guide
+    </button>
+    <button class="tab" data-tab="assets" title="Asset prefixes, ignore rules, asset pages">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 4 7.2v9.6L12 21l8-4.2V7.2L12 3z"/><path d="M4 7.2 12 11.4l8-4.2M12 11.4V21"/></svg>
+      Assets &amp; Ignore
+    </button>
+    <button class="tab" data-tab="output" title="Diagnostics and generated Kotlin files">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5"/><path d="m10.5 12.5-2 2 2 2M13.5 12.5l2 2-2 2"/></svg>
+      Output
+      <span class="tab-badge" id="outputBadge" hidden></span>
+    </button>
+    <button class="tab" data-tab="settings" title="App identity and generation options">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5"/></svg>
+      Settings
+    </button>
+  </nav>
+
+  <main>
+    <!-- ============================ CONVERT ============================ -->
+    <section class="tabpanel active" id="page-convert" role="tabpanel">
+      <details class="card" id="selectionCard" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 4h7v7H4zM13 13h7v7h-7z"/></svg>
+            </span>
+            <div class="card-titles">
+              <h3>Selection <span class="count-badge" id="selectionCount" hidden></span></h3>
+              <p>Frames you selected on the canvas — these become Composables. Click frames in Figma to change this.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <div id="selection"></div>
+        </div>
+      </details>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon tone-info">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5" opacity="0.4"/><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          </span>
+          <div class="card-titles">
+            <h3>Conversion mode</h3>
+            <p>How Figma values are translated into code.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="segmented" id="modeSegment">
+            <button type="button" class="seg-btn active" data-value="standalone">Standalone Compose</button>
+            <button type="button" class="seg-btn" data-value="existing-design-system">Design system</button>
+          </div>
+          <input type="hidden" id="mode" value="standalone" />
+          <p class="hint" id="modeHint">Literal colors, inline <code>TextStyle</code>, auto-generated components. Best for new apps &amp; prototypes.</p>
+          <p class="hint" id="modeHintDesign" style="display:none">Your <b>mappings</b> below rewrite colors, fonts and components in the output. Best for apps that already have a design system.</p>
+        </div>
+      </div>
+
+      <div class="card tone-ok">
+        <div class="card-head">
+          <span class="card-icon">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.5 2.5 5 13.8h5.2L9 21.5l8.6-11.3h-5.3l1.2-7.7z"/></svg>
+          </span>
+          <div class="card-titles">
+            <h3>Run</h3>
+            <p>Convert the selection into Kotlin files + assets, then download a ready-to-merge ZIP.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="row">
+            <button class="primary" id="convertBtn" title="Extract the selection and generate Kotlin code">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.5 2.5 5 13.8h5.2L9 21.5l8.6-11.3h-5.3l1.2-7.7z"/></svg>
+              Convert selection
+            </button>
+            <button class="secondary" id="goOutputBtn" title="Jump to the Output tab (diagnostics, files, assets, export)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5"/></svg>
+              Review output
+            </button>
+          </div>
+          <div class="status" id="convertStatus">Select a frame on the canvas, then convert.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================ MAPPINGS =========================== -->
+    <section class="tabpanel" id="page-mappings" role="tabpanel">
+      <div class="intro">
+        <svg class="intro-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="15" height="15"><circle cx="12" cy="12" r="9"/><path d="M12 8.5v.01M12 11.5V16"/></svg>
+        <p><b>Teach the converter your design system.</b> Anything you map here replaces the Figma literal in generated code — e.g. <span class="example-pill"><b>#FFFFFF</b> → <code>Color(0xFFFFFFFF)</code></span> <span class="example-pill"><b>Inter</b> → <code>FontFamily.MyFont</code></span></p>
+      </div>
+
+      <details class="card">
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21a9 9 0 1 1 9-9c0 2.5-2 3-3.5 3H15a2 2 0 0 0-1.5 3.3c.3.4.5.9.5 1.4 0 .7-.5 1.3-2 1.3z"/></svg></span>
+            <div class="card-titles">
+              <h3>Solid colors <small style="color:var(--text2);font-weight:400">(hex)</small></h3>
+              <p>Replace Figma fill colors with your own Compose color expressions.</p>
+            </div>
+            <span class="count-badge" data-badge="colorMap" hidden></span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body" data-map="colorMap" data-key="Hex (#RRGGBB)" data-value="Kotlin expression"></div>
+      </details>
+
+      <details class="card">
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3.5"/><path d="M12 3.5V6M12 18v2.5M5 12H2.5M21.5 12H19M7 7 5.2 5.2M18.8 18.8 17 17M17 7l1.8-1.8M5.2 18.8 7 17"/></svg></span>
+            <div class="card-titles">
+              <h3>Variable colors <small style="color:var(--text2);font-weight:400">(name)</small></h3>
+              <p>Figma color <b>variables</b> resolved by name (needs token access).</p>
+            </div>
+            <span class="count-badge" data-badge="colorMapNames" hidden></span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body" data-map="colorMapNames" data-key="Variable name" data-value="Kotlin expression"></div>
+      </details>
+
+      <details class="card">
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5h14M12 5v14M9 19h6"/></svg></span>
+            <div class="card-titles">
+              <h3>Fonts <small style="color:var(--text2);font-weight:400">(family)</small></h3>
+              <p>Figma font family → your <code>FontFamily</code> expression.</p>
+            </div>
+            <span class="count-badge" data-badge="fontFamilyMap" hidden></span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body" data-map="fontFamilyMap" data-key="Figma family" data-value="FontFamily expression"></div>
+      </details>
+
+      <details class="card">
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 5h12M12 5v14M9 19h6" opacity="0.5"/><path d="M7 11h10M12 11v8M9.5 19h5"/></svg></span>
+            <div class="card-titles">
+              <h3>Text styles <small style="color:var(--text2);font-weight:400">(family+size)</small></h3>
+              <p>Figma text styles → <code>MaterialTheme.typography.…</code> or your own styles.</p>
+            </div>
+            <span class="count-badge" data-badge="textStyleMap" hidden></span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body" data-map="textStyleMap" data-key="Figma family" data-value="e.g. MaterialTheme.typography.titleLarge"></div>
+      </details>
+
+      <details class="card">
+        <summary>
+          <div class="card-head">
+            <span class="card-icon tone-warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 4 7.2v9.6L12 21l8-4.2V7.2L12 3z"/><path d="M4 7.2 12 11.4l8-4.2M12 11.4V21"/></svg></span>
+            <div class="card-titles">
+              <h3>Components <small style="color:var(--text2);font-weight:400">(Figma name → composable)</small></h3>
+              <p>Instances of a component become <b>your</b> composable call instead of generated layout.</p>
+            </div>
+            <span class="count-badge" data-badge="componentMap" hidden></span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body" data-map="componentMap" data-key="Figma component" data-value="Composable symbol"></div>
+      </details>
+
+      <div class="row" style="margin-top:2px">
+        <button class="secondary" id="exportProfileBtn" title="Download all mappings as a versionable JSON file">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V6M7 10l5-5 5 5M4 21h16"/><path d="M4 3h16" opacity="0.4"/></svg>
+          Export profile JSON
+        </button>
+        <button class="secondary" id="importProfileBtn" title="Import mappings from a JSON file (replaces current mappings)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6v9M7 10l5 5 5-5M4 21h16"/></svg>
+          Import profile JSON
+        </button>
+      </div>
+      <input type="file" id="importProfileInput" accept=".json,application/json" style="display:none" />
+    </section>
+
+    <!-- ============================= CONFIG ============================ -->
+    <section class="tabpanel" id="page-config" role="tabpanel">
+      <div class="intro">
+        <svg class="intro-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="15" height="15"><circle cx="12" cy="12" r="9"/><path d="M12 8.5v.01M12 11.5V16"/></svg>
+        <p><b>Configure components, not descriptions.</b> Select components (or instances) on the canvas and edit their <code>compose-studio:</code> configuration here — the plugin writes the block into the component description for you, replacing any previous one. See the <b>Guide</b> tab for the full reference.</p>
+      </div>
+
+      <div class="card" id="presetCard">
+        <div class="card-head">
+          <span class="card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 3h12l1 4H5l1-4z"/><path d="M5 7h14v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7z"/><path d="M9.5 11.5h5"/></svg>
+          </span>
+          <div class="card-titles">
+            <h3>Presets <span class="count-badge" id="presetCount" hidden></span></h3>
+            <p>Named configurations you can reuse on any component. Saved with this Figma account on this machine.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="row">
+            <select id="presetSelect" title="Pick a preset to load its values into the editor(s) below"></select>
+            <button type="button" class="secondary" id="presetDeleteBtn" title="Delete the selected preset" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+            </button>
+          </div>
+          <div class="row" id="presetSaveRow" style="display:none">
+            <input type="text" id="presetNameInput" placeholder="Preset name, e.g. Primary button" maxlength="48" />
+          </div>
+          <div class="row" id="presetSaveActionsRow">
+            <button type="button" class="secondary" id="presetSaveBtn" title="Capture the current editor values as a reusable preset">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5M12 11v6M9 14h6"/></svg>
+            Save current…</button>
+            <button type="button" class="secondary" id="presetSaveOk" style="display:none">Save preset</button>
+            <button type="button" class="secondary" id="presetSaveCancel" style="display:none">Cancel</button>
+          </div>
+          <p class="hint">Loading a preset fills the editor fields; nothing is written to components until you press <b>Apply</b>.</p>
+        </div>
+      </div>
+
+      <div class="card tone-ok" id="configEmptyState">
+        <div class="card-head">
+          <span class="card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><circle cx="8" cy="8" r="3.2"/><circle cx="16" cy="16" r="3.2"/><path d="M11.2 8H18M21 12.8V16M16 19.2h-3.2M8 11.2v5H4.2"/></svg>
+          </span>
+          <div class="card-titles">
+            <h3>Nothing to configure yet</h3>
+            <p>Select a <b>component</b> (or any instance of one) on the canvas, then its editor appears here.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <p class="hint">Configurations live in the component’s <code>description</code> — designer prose above the block is always kept. Every instance of the component follows its configuration. Use the <b>Guide</b> tab to see what each field does, or <b>Presets</b> above to reuse values you like.</p>
+        </div>
+      </div>
+
+      <details class="card" id="configCard" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon tone-info">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="7" cy="17" r="2.2"/></svg>
+            </span>
+            <div class="card-titles">
+              <h3>Selected components <span class="count-badge" id="configCount" hidden></span></h3>
+              <p>Visual editors for every component in the selection. Same field, different values? The editor shows <b>mixed</b> — set a value once to override it on all of them; leave it untouched to keep each component’s own.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <div id="configHost"></div>
+        </div>
+      </details>
+    </section>
+
+    <!-- ============================= GUIDE ============================= -->
+    <section class="tabpanel" id="page-guide" role="tabpanel">
+      <div class="intro">
+        <svg class="intro-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="15" height="15"><circle cx="12" cy="12" r="9"/><path d="M12 8.5v.01M12 11.5V16"/></svg>
+        <p><b>Component configuration reference.</b> A component’s configuration is a small <code>compose-studio:</code> block inside its description; the <b>Config</b> tab edits it visually, but the text below is exactly what it builds.</p>
+      </div>
+
+      <details class="card" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21a9 9 0 1 1 9-9c0 2.5-2 3-3.5 3H15a2 2 0 0 0-1.5 3.3c.3.4.5.9.5 1.4 0 .7-.5 1.3-2 1.3z"/></svg></span>
+            <div class="card-titles">
+              <h3>The block format</h3>
+              <p>Where it lives and what the plugin keeps.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <p class="hint">Paste this template after your designer prose (a blank line between them). Keys are flat <code>key: value</code> lines; lines starting with <code>#</code> are comments. The <b>Config</b> tab writes the same block for you and keeps your prose.</p>
+          <div class="cc-code">compose-studio:
+# role: button | card | fab | slider | switch | checkbox | chip |
+#       input | progress | badge | avatar | divider | listitem
+# kind: icon | image | vector
+# assets: auto | export | code
+# implementation: auto | custom
+# mapping: MyAppButton
+# mappingArgs: label="Sign In", count=2, icon=@icon
+# note: copied into the generated file as a comment
+role: card</div>
+          <p class="hint">Prose above the marker is preserved verbatim on every rewrite, and comments inside the block survive the raw/advanced editor. Description edits made in Figma’s own info panel may lag until the component is re-published.</p>
+        </div>
+      </details>
+
+      <details class="card" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3.5"/><path d="M12 3.5V6M12 18v2.5M5 12H2.5M21.5 12H19M7 7 5.2 5.2M18.8 18.8 17 17M17 7l1.8-1.8M5.2 18.8 7 17"/></svg></span>
+            <div class="card-titles">
+              <h3>Roles &amp; their parameters</h3>
+              <p>Every generated composable for the component gains these parameters.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <p class="hint">Parameters are minted with safe defaults, so call sites never break; your app overrides the handlers where behavior is wanted.</p>
+          <dl class="cc-glossary">
+            <dt>button</dt><dd><code>onClick</code>, <code>enabled</code> — Material <code>Button</code> when the look matches, else a ripple-free clickable custom body</dd>
+            <dt>card</dt><dd><code>onClick</code> — Material <code>Card</code> when the look matches, else ripple-free clickable</dd>
+            <dt>fab</dt><dd><code>onClick</code> — Material <code>FloatingActionButton</code> for circular solid fills, else ripple-free clickable</dd>
+            <dt>slider</dt><dd><code>value</code>, <code>onValueChange</code>, <code>enabled</code></dd>
+            <dt>switch</dt><dd><code>checked</code>, <code>onCheckedChange</code></dd>
+            <dt>checkbox</dt><dd><code>checked</code>, <code>onCheckedChange</code></dd>
+            <dt>chip</dt><dd><code>onClick</code>, <code>selected</code></dd>
+            <dt>input</dt><dd><code>value</code>, <code>onValueChange</code>, <code>enabled</code></dd>
+            <dt>progress</dt><dd><code>progress</code></dd>
+            <dt>listitem</dt><dd><code>onClick</code> — the custom body becomes ripple-free clickable</dd>
+            <dt>badge · avatar · divider</dt><dd>visual only — no parameters</dd>
+          </dl>
+        </div>
+      </details>
+
+      <details class="card" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3.5"/><path d="M12 3.5V6M12 18v2.5M5 12H2.5M21.5 12H19M7 7 5.2 5.2M18.8 18.8 17 17M17 7l1.8-1.8M5.2 18.8 7 17"/></svg></span>
+            <div class="card-titles">
+              <h3>Material 3 implementation</h3>
+              <p>When generated code is the real Material composable.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <p class="hint">For <code>card</code>, <code>button</code> and <code>fab</code> with <b>Implementation: auto</b>, the plugin emits the Material composable only when the design’s look can be reproduced exactly: a single solid fill, no border/shadow/extra backgrounds, any radius with <code>clip</code> on, and — for <code>fab</code> — a circular shape. Children then sit directly in the Material content lambda; the look comes from <code>colors/</code><code>shape</code> arguments instead of painted frames. Otherwise the plugin emits the custom body (same visual, plus the role parameters) and reports why.</p>
+        </div>
+      </details>
+
+      <details class="card" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 4 7.2v9.6L12 21l8-4.2V7.2L12 3z"/></svg></span>
+            <div class="card-titles">
+              <h3>Assets: kind &amp; policy</h3>
+              <p>Make a component an asset — or force it to stay code.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <dl class="cc-glossary">
+            <dt>kind</dt><dd>an explicit asset qualification — <code>icon</code> / <code>image</code> / <code>vector</code> — replacing any name-prefix rule; every instance exports as that asset type and no code is generated</dd>
+            <dt>assets: export</dt><dd>always export this component as an asset (never code)</dd>
+            <dt>assets: code</dt><dd>always generate code — wins over <code>kind</code> and over any global asset detection</dd>
+            <dt>assets: auto</dt><dd>name prefixes and other rules decide (default)</dd>
+          </dl>
+          <p class="hint"><b>Precedence:</b> ignore marks &gt; profile component mappings &gt; the block’s <code>mapping</code> &gt; its <code>kind</code>/<code>assets</code> directive &gt; curated library &gt; auto-detection. With a <code>mapping</code> set, role/asset directives are ignored for generation (the mapped call replaces them) — clear the mapping to use them.</p>
+        </div>
+      </details>
+
+      <details class="card" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5"/></svg></span>
+            <div class="card-titles">
+              <h3>Mapping to your own composable</h3>
+              <p>Instances call your app’s composable instead of generated code.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <p class="hint"><code>mapping</code> is a Kotlin symbol (simple or fully qualified). <code>mappingArgs</code> fills the target composable’s parameters — recursion walks the instance subtree: the first text becomes the string, an icon/vector child becomes the icon asset, a solid color becomes its hex, text-node children become <code>@content</code> slots, and the root’s modifier slot becomes <code>@modifier</code>. Quoted values are constants, and <code>true</code>/<code>42</code> are Kotlin literals.</p>
+          <div class="cc-code">mapping: com.example.ui.MyButton
+mappingArgs: title="Sign In", icon=@icon, color=#5551FF, label=@text</div>
+          <p class="hint">Mapping sources: <code>@text</code> first text · <code>@icon</code> icon · <code>@color</code> color · <code>@content</code> text slot · <code>@modifier</code> modifier.</p>
+        </div>
+      </details>
+
+      <details class="card" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="3.2"/><circle cx="16" cy="16" r="3.2"/><path d="M11.2 8H18M8 11.2v5H4.2"/></svg></span>
+            <div class="card-titles">
+              <h3>Why do I see “mixed”?</h3>
+              <p>Selecting several components together.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <p class="hint">When the selected components disagree on a field, that control shows <b>multiple values</b> instead of a value. Leave it as-is to keep each component’s own setting, or pick a value once to override it on <em>all</em> selected components when you press <b>Apply</b>. Unedited fields keep their per-component values too.</p>
+        </div>
+      </details>
+
+      <details class="card" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 3h12l1 4H5l1-4z"/><path d="M5 7h14v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7z"/></svg></span>
+            <div class="card-titles">
+              <h3>Presets</h3>
+              <p>Save and reuse configurations.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <p class="hint"><b>Save current…</b> captures exactly what the editor shows (mixed fields keep each component’s own, though a preset stores one merged value — edit what you want, press Apply first if needed). <b>Loading</b> a preset fills every field of the editor; nothing reaches a component until <b>Apply</b>. Presets live in this Figma client’s storage, up to 30, newer saves replacing the oldest ones.</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- ========================= ASSETS & IGNORE ======================= -->
+    <section class="tabpanel" id="page-assets" role="tabpanel">
+      <div class="intro">
+        <svg class="intro-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="15" height="15"><circle cx="12" cy="12" r="9"/><path d="M12 8.5v.01M12 11.5V16"/></svg>
+        <p><b>Decide what becomes what.</b> Curate which layers turn into <b>assets</b>, which into <b>layout</b>, and which get <b>ignored</b> (e.g. the phone status bar). Everything here is remembered between sessions and applies to every future conversion.</p>
+      </div>
+
+      <details class="card" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h9"/><path d="m15 16 3 3 4-5"/></svg></span>
+            <div class="card-titles">
+              <h3>Asset name filters</h3>
+              <p>Only layers named with the prefix become assets — everything else stays plain layout.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <div class="field">
+            <div class="row"><input type="text" id="iconAssetPrefix" placeholder="e.g. icon_  (empty = auto-detect)" /></div>
+            <p class="hint">Icon filter: only vectors whose name starts with it export as <b>SVG</b> and render as <code>Image(painterResource(...))</code>. Example: <code>icon_star</code> → drawable <code>ic_star</code>.</p>
+          </div>
+          <div class="field">
+            <div class="row"><input type="text" id="imageAssetPrefix" placeholder="e.g. img_  (empty = auto-detect)" /></div>
+            <p class="hint">Image filter: same idea for <b>PNG</b> image fills (→ <code>drawable-nodpi</code>). Example: <code>img_banner</code> stays drawable <code>img_banner</code>.</p>
+          </div>
+        </div>
+      </details>
+
+      <details class="card" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon tone-danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg></span>
+            <div class="card-titles">
+              <h3>Ignore rules</h3>
+              <p>Status bars, watermarks, helper frames — hidden from every conversion (layout <b>and</b> assets).</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <div class="field">
+            <div class="row"><input type="text" id="ignorePrefix" placeholder="e.g. _ignore  (empty = no prefix rule)" /></div>
+            <p class="hint">Any layer whose name starts with this — <b>and its whole subtree</b> — is skipped. Case-insensitive.</p>
+          </div>
+          <p class="hint" style="margin:8px 0 5px"><b>Or mark by selection</b> — exact, name-collision-safe: components match by identity, plain frames by name + type + size:</p>
+          <div class="row">
+            <button class="secondary" id="ignoreSelBtn" title="Select something on the canvas first (e.g. the phone status bar), then mark it ignored">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>
+              Ignore selected
+            </button>
+            <button class="secondary" id="skipAssetBtn" title="Keep the layout of the selected node, but never export it as an asset">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>
+              Keep layout, skip asset
+            </button>
+          </div>
+          <div class="field" style="margin-top:9px">
+            <p class="hint" style="margin-bottom:5px"><b style="color:var(--text)">Ignored layers</b> <span class="count-badge" id="ignoreMarksCount"></span></p>
+            <div id="ignoreMarksList"></div>
+          </div>
+          <div class="field" style="margin-top:7px">
+            <p class="hint" style="margin-bottom:5px"><b style="color:var(--text)">Kept but never exported as assets</b> <span class="count-badge" id="assetSkipCount"></span></p>
+            <div id="assetSkipList"></div>
+          </div>
+        </div>
+      </details>
+
+      <details class="card" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon tone-ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 4 7.2v9.6L12 21l8-4.2V7.2L12 3z"/><path d="M4 7.2 12 11.4l8-4.2M12 11.4V21"/></svg></span>
+            <div class="card-titles">
+              <h3>Asset page library</h3>
+              <p>Designers keep all icons on one page? Harvest that page once — every screen then reuses the same canonical assets.</p>
+            </div>
+            <span class="count-badge" id="libraryCount" hidden></span>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <div class="field">
+            <div class="row">
+              <select id="assetPageSelect" title="The page whose layers become canonical assets (top-level layers; sections expand one level)"></select>
+            </div>
+            <div class="row">
+              <button class="primary" id="harvestBtn" style="flex:1" title="Turn every top-level layer of the chosen page into a library asset">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v7m0 0 3-3m-3 3-3-3"/><path d="M4 13v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/></svg>
+                Harvest page
+              </button>
+              <button class="secondary btn-danger-ghost" id="clearLibraryBtn" title="Remove every library asset">Clear all</button>
+            </div>
+          </div>
+          <div id="libraryList"></div>
+          <div class="asset-note" id="libraryHint"></div>
+        </div>
+      </details>
+    </section>
+
+    <!-- ============================= OUTPUT ============================ -->
+    <section class="tabpanel" id="page-output" role="tabpanel">
+      <details class="card" id="resultsSection" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon tone-info"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8.5v.01M12 11.5V16"/></svg></span>
+            <div class="card-titles">
+              <h3>Diagnostics <span class="count-badge" id="diagCount" hidden></span></h3>
+              <p>Every approximation or skip is honest — nothing is silently dropped. Click a chip to filter.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <div class="diag-chips" id="diagSummary"></div>
+          <div id="diagList" class="list-scroll">
+            <div class="empty">No conversion yet — results appear here after you run one.</div>
+          </div>
+        </div>
+      </details>
+
+      <details class="card" id="filesSection" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5"/></svg></span>
+            <div class="card-titles">
+              <h3>Files &amp; assets <span class="count-badge" id="exportCount" hidden></span></h3>
+              <p>Real Kotlin output and asset previews — tick the checkboxes to choose what goes into the ZIP, then download below.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <div id="filesEmpty" class="empty">
+            <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 3 6 13.5h4.5L10 21l7-10.5h-4.5L13 3z"/></svg>
+            Run a conversion to see generated Kotlin here.
+          </div>
+          <div id="filesContent" style="display:none">
+            <!-- Design-system output gets its own subsection at the top: the DesignSystem.kt
+                 accessor (plus the material Theme.kt) preview and export from here. -->
+            <div id="dsGroup" style="display:none;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+              <label class="export-master" style="margin-bottom:8px">
+                <span class="group-name">Design system</span>
+                <span class="count-badge" id="dsCount" hidden></span>
+                <span class="hint">tokens as Kotlin — ticked via the Files master below</span>
+              </label>
+              <div class="filebar" id="dsBar"></div>
+            </div>
+            <label class="export-master" style="margin-bottom:8px">
+              <input type="checkbox" id="exportAllFiles" checked title="Include or exclude every generated file in the ZIP" />
+              <span class="group-name">Files</span>
+              <span class="count-badge" id="filesCount" hidden></span>
+              <span class="hint" id="exportFilesCount"></span>
+            </label>
+            <div class="preview-head">
+              <span class="file-name" id="previewName"></span>
+              <button class="secondary" id="copyFileBtn" title="Copy the current file's Kotlin source">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                Copy file
+              </button>
+            </div>
+            <div class="filebar" id="fileBar"></div>
+            <pre id="codePreview"></pre>
+          </div>
+
+          <div class="asset-group-label" id="assetGroup" style="display:none">
+            <label class="export-master" id="assetsExportMaster" style="display:none">
+              <input type="checkbox" id="exportAllAssets" checked title="Include or exclude every selectable asset in the ZIP" />
+              <span class="group-name">Assets</span>
+              <span class="count-badge" id="assetCount" hidden></span>
+              <span class="hint" id="exportAssetsCount"></span>
+            </label>
+            <p class="hint" id="exportVectorHint" style="display:none">ImageVector-format tiles have no standalone file — they compile into <code>Icons.kt</code>, so keep <code>Icons.kt</code> ticked above to export them.</p>
+            <div id="assetsGrid" class="asset-grid" style="display:none"></div>
+          </div>
+
+          <div id="exportBody" style="display:none;margin-top:12px">
+            <div class="export-presets" role="group" aria-label="Export presets">
+              <button class="secondary" id="exportPresetAll" type="button" title="Select all files and all assets">Everything</button>
+              <button class="secondary" id="exportPresetFiles" type="button" title="Select all files and no assets">Files only</button>
+              <button class="secondary" id="exportPresetAssets" type="button" title="Select no files and all assets">Assets only</button>
+              <button class="secondary" id="exportPresetNone" type="button" title="Select nothing">None</button>
+            </div>
+            <div class="row">
+              <button class="primary" id="exportZipBtn" disabled title="Download a ZIP with exactly the selected files and assets (Android project layout)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+                <span id="exportZipLabel">Download ZIP</span>
+              </button>
+            </div>
+            <p class="hint" id="exportHint" style="margin:6px 0 0">A <code>conversion-report.json</code> matching this selection is always included.</p>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- ============================ SETTINGS =========================== -->
+    <section class="tabpanel" id="page-settings" role="tabpanel">
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 4 7.2v9.6L12 21l8-4.2V7.2L12 3z"/><path d="M4 7.2 12 11.4l8-4.2M12 11.4V21"/></svg></span>
+          <div class="card-titles">
+            <h3>Project identity</h3>
+            <p>Becomes the exported folder structure: <code>&lt;app name&gt;/app/src/main/java/&lt;package path&gt;/</code></p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="field">
+            <div class="row"><input type="text" id="appName" placeholder="App name" /></div>
+            <p class="hint">Name of the top folder in the ZIP, e.g. <code>ComposeApp/…</code>. Spaces become underscores.</p>
+          </div>
+          <div class="field">
+            <div class="row"><input type="text" id="packageName" placeholder="Package name (com.example.app)" /></div>
+            <p class="hint">Kotlin package for generated files — put your real applicationId here so files can be copied over directly.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon tone-warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 4v7m0 0 3-3m-3 3-3-3"/><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg></span>
+          <div class="card-titles">
+            <h3>Variant parameters</h3>
+            <p>Auto-generated components declare variant options in a type-safe way.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="segmented" id="variantSegment">
+            <button type="button" class="seg-btn active" data-value="enum">Enum</button>
+            <button type="button" class="seg-btn" data-value="sealed">Sealed</button>
+            <button type="button" class="seg-btn" data-value="string">Strings</button>
+          </div>
+          <input type="hidden" id="variantParamStyle" value="enum" />
+          <p class="hint" id="variantHint" style="margin-top:6px">
+            <code>size = ButtonSize.XL</code> — misspellings fail the build. True/False variants become <code>Boolean</code> params automatically.
+          </p>
+          <div class="segmented" id="variantShapeSegment" style="margin-top:10px">
+            <button type="button" class="seg-btn active" data-value="auto">Auto</button>
+            <button type="button" class="seg-btn" data-value="when">When</button>
+            <button type="button" class="seg-btn" data-value="functions">Functions</button>
+            <button type="button" class="seg-btn" data-value="object">In object</button>
+          </div>
+          <input type="hidden" id="variantShape" value="auto" />
+          <p class="hint" id="variantShapeHint" style="margin-top:6px">
+            How the variant bodies are structured: <strong>Auto</strong> measures the differences per component (near-identical variants share one function with typed value parameters, very different ones get one function per variant, in between a <code>when</code>).
+          </p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m20.5 11.5-8.35 8.35a2.2 2.2 0 0 1-3.13 0l-5.37-5.37a2.2 2.2 0 0 1 0-3.13L12 3l7.5.5.5 7.5z"/><circle cx="15.5" cy="8" r="1.5"/></svg></span>
+          <div class="card-titles">
+            <h3>Asset export</h3>
+            <p>Images and icons: on/off, and in which artifact format.</p>
+          </div>
+        </div>
+        <div class="card-body" id="assetExportBody">
+          <div class="field">
+            <div class="segmented" id="exportSegment">
+              <button type="button" class="seg-btn" data-value="true">Exporting</button>
+              <button type="button" class="seg-btn" data-value="false">Off</button>
+            </div>
+            <input type="hidden" id="exportAssets" value="true" />
+            <p class="hint" id="assetExportHint" style="margin-top:6px"></p>
+          </div>
+          <div class="field" id="vectorFormatField">
+            <p class="hint fieldlabel" id="vectorHintTitle" style="margin-top:6px;font-weight:600">Vector assets (icons &amp; shapes)</p>
+            <div class="segmented" id="vectorSegment">
+              <button type="button" class="seg-btn" data-value="svg">SVG</button>
+              <button type="button" class="seg-btn" data-value="imagevector">ImageVector</button>
+              <button type="button" class="seg-btn" data-value="png">PNG</button>
+            </div>
+            <input type="hidden" id="vectorFormat" value="svg" />
+            <p class="hint" id="vectorHint" style="margin-top:6px"></p>
+          </div>
+          <div class="field" id="imageFormatField">
+            <p class="hint fieldlabel" id="imageHintTitle" style="margin-top:6px;font-weight:600">Image fills</p>
+            <div class="segmented" id="imageSegment">
+              <button type="button" class="seg-btn" data-value="auto">Auto</button>
+              <button type="button" class="seg-btn" data-value="png">PNG</button>
+              <button type="button" class="seg-btn" data-value="jpg">JPG</button>
+            </div>
+            <input type="hidden" id="imageFormat" value="auto" />
+            <p class="hint" id="imageHint" style="margin-top:6px"></p>
+          </div>
+          <p class="hint" style="margin:0">Individual library assets can override all of this — see the format dropdown on each entry in the <b>Assets</b> tab.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span>
+          <div class="card-titles">
+            <h3>Design system as code</h3>
+            <p>Emit a <code>DesignSystem.kt</code> from your Figma tokens — one accessor object, optionally with a Material theme.</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="field">
+            <div class="segmented" id="dsSourceSegment">
+              <button type="button" class="seg-btn" data-value="off">Off</button>
+              <button type="button" class="seg-btn" data-value="variables">Variables</button>
+              <button type="button" class="seg-btn" data-value="styles">Styles</button>
+              <button type="button" class="seg-btn" data-value="both">Both</button>
+            </div>
+            <input type="hidden" id="dsSource" value="off" />
+            <p class="hint" id="dsSourceHint" style="margin-top:6px"></p>
+          </div>
+          <div class="field" id="dsStructureField">
+            <div class="segmented" id="dsStructureSegment">
+              <button type="button" class="seg-btn" data-value="object">Object</button>
+              <button type="button" class="seg-btn" data-value="material">Material</button>
+              <button type="button" class="seg-btn" data-value="material-theme">Material + Theme</button>
+            </div>
+            <input type="hidden" id="dsStructure" value="object" />
+            <p class="hint" id="dsStructureHint" style="margin-top:6px"></p>
+          </div>
+          <div class="field" id="dsUsageField">
+            <p class="hint fieldlabel" style="font-weight:600">Design system from repeated values</p>
+            <div class="segmented" id="dsUsageSegment">
+              <button type="button" class="seg-btn" data-value="true">Extract</button>
+              <button type="button" class="seg-btn" data-value="false">Off</button>
+            </div>
+            <input type="hidden" id="dsUsage" value="false" />
+            <p class="hint" id="dsUsageHint" style="margin-top:6px"></p>
+          </div>
+          <div class="field" id="dsUsageMinField">
+            <div class="row">
+              <input type="number" id="dsUsageMin" min="2" max="99" step="1" value="2" placeholder="2" />
+            </div>
+            <p class="hint" id="dsUsageMinHint" style="margin-top:6px"></p>
+          </div>
+          <p class="hint" style="margin:0">Emitted next to the screens as <code>DesignSystem.kt</code>; the original Figma path of every token is kept as its KDoc.</p>
+        </div>
+      </div>
+
+      <div class="card tone-info">
+        <div class="card-head">
+          <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M12 21v-9m0 0L4 7.5m8 4.5 8-4.5"/></svg></span>
+          <div class="card-titles">
+            <h3>About</h3>
+            <p>Compose Studio plugin · phase 1</p>
+          </div>
+        </div>
+        <div class="card-body">
+          <p class="hint" style="margin:0">
+            Runs <b>fully local</b>: the conversion is pure code, no AI, no network (<code>networkAccess: none</code>), no telemetry.
+            Settings and curated lists persist only in this Figma client's storage.
+            Everything the converter does is reported in the <b>Output</b> tab — nothing is dropped silently.
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="bar-bottom">
+    <button class="secondary" id="refreshBtn" title="Read the current canvas selection">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg>
+      Re-check
+    </button>
+    <div class="flex"></div>
+    <span class="lastrun" id="lastRun"></span>
+  </footer>
+
+<script>
+'use strict';
+/* =========================================================================
+ * Message plumbing + state
+ * ========================================================================= */
+const $ = (id) => document.getElementById(id);
+
+/** Current settings mirror; edited in place and synced to the sandbox. */
+let settings = {
+  appName: 'ComposeApp',
+  packageName: 'com.example.composeapp',
+  iconAssetPrefix: '',
+  imageAssetPrefix: '',
+  ignorePrefix: '',
+  fontFamilyMap: {},
+  colorMap: {},
+  colorMapNames: {},
+  textStyleMap: {},
+  componentMap: {},
+  variantParamStyle: 'enum',
+  variantShape: 'auto',
+  exportAssets: true,
+  vectorFormat: 'svg',
+  imageFormat: 'auto',
+  dsSource: 'off',
+  dsStructure: 'object',
+  dsUsage: false,
+  dsUsageMin: 2,
+};
+
+/** Last curation snapshot from the sandbox (marks + asset library + pages). */
+let assetSources = { pages: [], ignoreMarks: [], assetSkipMarks: [], library: [] };
+
+const lastConversion = { diagnostics: [], files: [], imageAssets: [], vectorAssets: [] };
+let activeFileIndex = -1;
+/** True once at least one conversion message arrived (drives empty states). */
+let converted = false;
+/** Diagnostics level filter: 'all' | 'error' | 'warning' | 'info'. */
+let diagFilter = 'all';
+
+function setStatus(text, isError) {
+  const el = $('convertStatus');
+  el.textContent = text;
+  el.classList.remove('err', 'busy', 'ok');
+  if (isError) el.classList.add('err');
+  else if (/…$/.test(text) || /\.\.\.$/.test(text)) el.classList.add('busy');
+  else if (text.indexOf('Conversion finished') === 0) el.classList.add('ok');
+  else if (text.indexOf('Copied ') === 0 || text.indexOf('Download') === 0 || text.indexOf('Harvested ') === 0 || text.indexOf('Marked ') === 0) el.classList.add('ok');
+}
+
+window.onmessage = (event) => {
+  const msg = event.data && (event.data.pluginMessage || event.data);
+  if (!msg || typeof msg.type !== 'string') return;
+  try {
+    switch (msg.type) {
+      case 'settings':
+        applySettings(msg.payload);
+        break;
+      case 'inspection':
+        renderSelection(msg.payload);
+        break;
+      case 'component-configs':
+        renderComponentConfigs(msg.payload);
+        break;
+      case 'component-presets':
+        ccPresets = (msg.payload && msg.payload.presets) || [];
+        renderPresetBar();
+        break;
+      case 'conversion':
+        renderConversion(msg.payload);
+        break;
+      case 'asset-sources':
+        assetSources = msg.payload || { pages: [], ignoreMarks: [], assetSkipMarks: [], library: [] };
+        renderAssetSources();
+        break;
+      case 'notify':
+        setStatus(msg.payload.message, !!msg.payload.isError);
+        break;
+      default:
+        break;
+    }
+  } catch (e) {
+    setStatus('UI error: ' + (e && e.message ? e.message : String(e)), true);
+  }
+};
+
+/* =========================================================================
+ * Tabs (with lazy content; reflects the current caption states)
+ * ========================================================================= */
+function switchTab(name) {
+  for (const button of document.querySelectorAll('#tabbar .tab')) {
+    button.classList.toggle('active', button.getAttribute('data-tab') === name);
+  }
+  for (const panel of document.querySelectorAll('main > .tabpanel')) {
+    panel.classList.toggle('active', panel.id === 'page-' + name);
+  }
+}
+for (const button of document.querySelectorAll('#tabbar .tab')) {
+  button.onclick = () => switchTab(button.getAttribute('data-tab'));
+}
+
+/* =========================================================================
+ * Settings sync
+ * ========================================================================= */
+let syncTimer = null;
+function queueSettingsSync() {
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    syncTimer = null;
+    parent.postMessage({ pluginMessage: { type: 'update-settings', payload: settings } }, '*');
+  }, 350);
+}
+
+function applySettings(payload) {
+  if (!payload) return;
+  settings = {
+    appName: payload.appName || 'ComposeApp',
+    packageName: payload.packageName || 'com.example.composeapp',
+    iconAssetPrefix: payload.iconAssetPrefix || '',
+    imageAssetPrefix: payload.imageAssetPrefix || '',
+    ignorePrefix: payload.ignorePrefix || '',
+    variantParamStyle: ['enum', 'sealed', 'string'].includes(payload.variantParamStyle) ? payload.variantParamStyle : 'enum',
+    variantShape: ['auto', 'when', 'functions', 'object'].includes(payload.variantShape) ? payload.variantShape : 'auto',
+    fontFamilyMap: payload.fontFamilyMap || {},
+    colorMap: payload.colorMap || {},
+    colorMapNames: payload.colorMapNames || {},
+    textStyleMap: payload.textStyleMap || {},
+    componentMap: payload.componentMap || {},
+    exportAssets: payload.exportAssets !== false,
+    vectorFormat: ['svg', 'imagevector', 'png'].includes(payload.vectorFormat) ? payload.vectorFormat : 'svg',
+    imageFormat: ['auto', 'png', 'jpg'].includes(payload.imageFormat) ? payload.imageFormat : 'auto',
+    dsSource: ['off', 'variables', 'styles', 'both'].includes(payload.dsSource) ? payload.dsSource : 'off',
+    dsStructure: ['object', 'material', 'material-theme'].includes(payload.dsStructure) ? payload.dsStructure : 'object',
+    dsUsage: payload.dsUsage === true,
+    dsUsageMin: clampUsageMin(payload.dsUsageMin),
+  };
+  $('appName').value = settings.appName;
+  $('packageName').value = settings.packageName;
+  $('iconAssetPrefix').value = settings.iconAssetPrefix;
+  $('imageAssetPrefix').value = settings.imageAssetPrefix;
+  $('ignorePrefix').value = settings.ignorePrefix;
+  $('variantParamStyle').value = settings.variantParamStyle;
+  $('variantShape').value = settings.variantShape || 'auto';
+  $('exportAssets').value = settings.exportAssets ? 'true' : 'false';
+  $('vectorFormat').value = settings.vectorFormat;
+  $('imageFormat').value = settings.imageFormat;
+  $('dsSource').value = settings.dsSource;
+  $('dsStructure').value = settings.dsStructure || 'object';
+  $('dsUsage').value = settings.dsUsage ? 'true' : 'false';
+  $('dsUsageMin').value = String(settings.dsUsageMin);
+  syncVariantSegment();
+  syncVariantShapeSegment();
+  syncAssetExportUI();
+  syncDsSourceUI();
+  syncDsUsageUI();
+
+  for (const host of document.querySelectorAll('[data-map]')) {
+    renderMapEditor(host);
+  }
+}
+
+/* Segmented control for the variant-parameters option. */
+function syncVariantSegment() {
+  const value = settings.variantParamStyle || 'enum';
+  const seg = $('variantSegment');
+  for (const button of seg.querySelectorAll('.seg-btn')) {
+    button.classList.toggle('active', button.getAttribute('data-value') === value);
+  }
+  const hint = $('variantHint');
+  if (value === 'enum') {
+    hint.innerHTML = '<code>size = ButtonSize.XL</code> — misspellings fail the build. True/False variants become <code>Boolean</code> params automatically.';
+  } else if (value === 'sealed') {
+    hint.innerHTML = '<code>sealed interface ButtonType</code> with one object per value — exhaustive <code>when</code> support in app code.';
+  } else {
+    hint.innerHTML = 'Legacy plain strings, e.g. <code>type = "Primary"</code> — flexible, but no compile-time safety.';
+  }
+}
+
+/* Segmented control for the variant code shape (body structure). */
+function syncVariantShapeSegment() {
+  const value = settings.variantShape || 'auto';
+  const seg = $('variantShapeSegment');
+  for (const button of seg.querySelectorAll('.seg-btn')) {
+    button.classList.toggle('active', button.getAttribute('data-value') === value);
+  }
+  const hint = $('variantShapeHint');
+  if (value === 'auto') {
+    hint.innerHTML = 'Per component, the plugin compares the variant bodies: near-identical variants share one composable with typed value parameters, very different ones get one composable per variant, in between a <code>when</code>.';
+  } else if (value === 'when') {
+    hint.innerHTML = 'Classic: one composable keeps the variant-key parameters and a <code>when</code> picks each variant\u2019s content.';
+  } else if (value === 'functions') {
+    hint.innerHTML = 'One top-level composable per variant, e.g. <code>fun ButtonDefaultLarge()</code> — call sites pick their variant\u2019s function directly.';
+  } else {
+    hint.innerHTML = 'Same one-composable-per-variant bodies grouped inside <code>object Button</code>, e.g. <code>Button.PressedLarge()</code>.';
+  }
+}
+
+/* =========================================================================
+ * Asset-export control (Settings tab)
+ * ========================================================================= */
+function syncSegment(segId, inputId) {
+  const seg = $(segId);
+  const value = $(inputId).value;
+  for (const button of seg.querySelectorAll('.seg-btn')) {
+    button.classList.toggle('active', button.getAttribute('data-value') === value);
+  }
+}
+
+function syncAssetExportUI() {
+  const on = $('exportAssets').value !== 'false';
+  syncSegment('exportSegment', 'exportAssets');
+  $('assetExportHint').textContent = on
+    ? 'Layers matching the asset prefixes (or the curated library) are exported with the generated code.'
+    : 'No assets are exported — every candidate becomes plain layout geometry (reported per node in the diagnostics).';
+  $('vectorHint').innerHTML = {
+    svg: '<code>vectors/*.svg</code> in the ZIP + <code>R.drawable</code> references; convert to drawables for Android release builds.',
+    imagevector: '<b>Icons.kt</b> with real <code>ImageVector</code> vals: pure Kotlin, compiles straight into your app. Unrepresentable SVG parts are listed as skipped comments.',
+    png: 'Pre-rendered <code>res/drawable-nodpi/*.png</code> bitmaps; simplest integration, no vector conversion.',
+  }[$('vectorFormat').value];
+  $('imageHint').innerHTML = {
+    auto: 'Keeps the exact bytes the designer imported (extension reflects the real format: a JPEG photo stays .jpg).',
+    png: 'Re-renders every image-fill node as PNG.',
+    jpg: 'Re-renders every image-fill node as JPG (smaller, no transparency).',
+  }[$('imageFormat').value];
+  syncSegment('vectorSegment', 'vectorFormat');
+  syncSegment('imageSegment', 'imageFormat');
+  // Format pickers are inert while exporting is off.
+  $('vectorFormatField').style.opacity = on ? '' : '0.4';
+  $('imageFormatField').style.opacity = on ? '' : '0.4';
+  for (const seg of ['vectorSegment', 'imageSegment']) {
+    for (const button of $(seg).querySelectorAll('.seg-btn')) button.disabled = !on;
+  }
+}
+
+function wireSegment(segId, inputId, refresh) {
+  const seg = $(segId);
+  for (const button of seg.querySelectorAll('.seg-btn')) {
+    button.onclick = () => {
+      if (button.disabled) return;
+      $(inputId).value = button.getAttribute('data-value');
+      settings[inputId] = inputId === 'exportAssets' || inputId === 'dsUsage'
+        ? button.getAttribute('data-value') === 'true'
+        : button.getAttribute('data-value');
+      refresh();
+      queueSettingsSync();
+    };
+  }
+}
+wireSegment('exportSegment', 'exportAssets', syncAssetExportUI);
+wireSegment('vectorSegment', 'vectorFormat', syncAssetExportUI);
+wireSegment('imageSegment', 'imageFormat', syncAssetExportUI);
+
+/* =========================================================================
+ * Design-system-as-code control (Settings tab)
+ * ========================================================================= */
+function syncDsSourceUI() {
+  syncSegment('dsSourceSegment', 'dsSource');
+  $('dsSourceHint').innerHTML = {
+    off: 'No design-system file is generated — the Kotlin output stays exactly as before.',
+    variables: 'Reads local <b>variable collections</b>: colors become <code>Color(0xAARRGGBB)</code> vals, numbers <code>dp</code>/<code>sp</code>, font-weight variables (<code>weight</code> word, integer 1..1000) become <code>FontWeight</code> vals that matching text styles reference, plus strings and booleans. Wrapper path words that repeat a section name are stripped (<code>Color/Base</code> → <code>Base</code>). Multi-mode collections (Light/Dark) keep every value: each mode nests inside its own wrapper object, so <code>Colors.Light.Surface</code> and <code>Colors.Dark.Surface</code> coexist; screens and Material slots prefer the collection default mode.',
+    styles: 'Reads local <b>paint styles</b> (gradients keep only their first stop), <b>text styles</b> as <code>TextStyle</code> vals — effect styles are reported as skipped.',
+    both: 'Merges variables and styles into one <code>DesignSystem.kt</code>. Duplicate flattened names get numeric suffixes.',
+  }[$('dsSource').value];
+  const on = $('dsSource').value !== 'off';
+  syncSegment('dsStructureSegment', 'dsStructure');
+  $('dsStructureHint').innerHTML = {
+    object: 'One file, one accessor: <code>DesignSystem.Colors.BrandPrimary</code>, <code>DesignSystem.Type.TitleLarge</code>, … Every token family is a nested object of this single file (default).',
+    material: 'Adds name-matched Material 3 slots into <code>DesignSystem/Theme.kt</code>, assigning the matched values directly: <code>AppColorScheme</code> (<code>lightColorScheme(primary = Color(0xFF…), …)</code>) and <code>AppTypography</code> (<code>Typography(titleLarge = TextStyle(…), …)</code>); unmatched tokens stay plain vals in the accessor object.',
+    'material-theme': 'Material artifacts plus a ready <code>DesignSystemTheme(content = …)</code> composable inside <code>Theme.kt</code> that wraps <code>MaterialTheme</code>. Multi-argument calls are formatted one argument per line.',
+  }[$('dsStructure').value];
+  // The structure is inert while the design system is off.
+  $('dsStructureField').style.opacity = on ? '' : '0.4';
+  for (const button of $('dsStructureSegment').querySelectorAll('.seg-btn')) button.disabled = !on;
+}
+wireSegment('dsSourceSegment', 'dsSource', syncDsSourceUI);
+wireSegment('dsStructureSegment', 'dsStructure', syncDsSourceUI);
+
+/* =========================================================================
+ * Repeated-value extraction control (Settings tab, design-system card)
+ * ========================================================================= */
+function clampUsageMin(value) {
+  const n = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : parseInt(value, 10);
+  return Number.isFinite(n) ? Math.min(99, Math.max(2, n)) : 2;
+}
+
+function syncDsUsageUI() {
+  syncSegment('dsUsageSegment', 'dsUsage');
+  const on = $('dsUsage').value === 'true';
+  syncSegment('dsStructureSegment', 'dsStructure');
+  $('dsUsageHint').innerHTML = on
+    ? 'Colors, spacing values, radii, borders, fixed sizes and text styles that repeat across the converted frames (at least the number of times below) become named tokens — named after <b>where each value is used mostly</b> (<code>Colors.CardSurface</code>, <code>Metrics.Padding16</code>, <code>Metrics.CardRadius12</code>, <code>Type.TitleLarge</code>). Generated screens reference those tokens instead of raw literals; dedicated values such as positioning offsets and shadow elevation stay literals.'
+    : 'Off — tokens come only from Figma variables and/or styles; every screen value stays a literal.';
+  const min = settings.dsUsageMin;
+  $('dsUsageMinField').style.opacity = on ? '' : '0.4';
+  $('dsUsageMin').disabled = !on;
+  $('dsUsageMinHint').innerHTML = 'Minimum occurrences (how often a value must repeat) before it becomes a token: currently <b>' + min + '</b>. Two uses count as repeated; raise it to keep incidental values out.';
+}
+
+wireSegment('dsUsageSegment', 'dsUsage', syncDsUsageUI);
+$('dsUsageMin').onchange = () => {
+  settings.dsUsageMin = clampUsageMin($('dsUsageMin').value);
+  $('dsUsageMin').value = String(settings.dsUsageMin);
+  syncDsUsageUI();
+  queueSettingsSync();
+};
+
+/* =========================================================================
+ * Map editors (generic key→value rows)
+ * ========================================================================= */
+function updateMapBadge(host, count) {
+  const badge = host.closest('.card') && host.closest('.card').querySelector('[data-badge="' + host.getAttribute('data-map') + '"]');
+  if (!badge) return;
+  badge.textContent = String(count);
+  badge.hidden = count === 0;
+  badge.classList.toggle('hot', count > 0);
+}
+
+function mapInput() {
+  const input = document.createElement('input');
+  input.type = 'text';
+  return input;
+}
+
+function renderMapEditor(host) {
+  const key = host.getAttribute('data-map');
+  const keyLabel = host.getAttribute('data-key') || 'Source';
+  const valueLabel = host.getAttribute('data-value') || 'Target';
+  const map = settings[key];
+  host.innerHTML = '';
+  const entries = Object.entries(map);
+  updateMapBadge(host, entries.length);
+  for (const [k, v] of entries) {
+    const row = document.createElement('div');
+    row.className = 'maprow';
+    const kInput = mapInput(); kInput.value = k; kInput.placeholder = keyLabel;
+    const vInput = mapInput(); vInput.value = v; vInput.placeholder = valueLabel;
+    row.appendChild(kInput); row.appendChild(vInput);
+    const del = document.createElement('button');
+    del.className = 'del'; del.textContent = '✕'; del.type = 'button';
+    del.title = 'Remove this mapping';
+    del.onclick = () => { delete map[k]; renderMapEditor(host); queueSettingsSync(); };
+    row.appendChild(del);
+
+    const commit = () => {
+      const newKey = kInput.value.trim();
+      const newVal = vInput.value.trim();
+      if (!newKey && !newVal) { delete map[k]; renderMapEditor(host); queueSettingsSync(); return; }
+      if (newKey !== k) delete map[k];
+      map[newKey] = newVal;
+      queueSettingsSync();
+    };
+    kInput.onchange = commit;
+    vInput.onchange = commit;
+    host.appendChild(row);
+  }
+  const add = document.createElement('div');
+  add.className = 'row';
+  const addBtn = document.createElement('button');
+  addBtn.className = 'secondary'; addBtn.type = 'button'; addBtn.textContent = '+ Add mapping';
+  addBtn.onclick = () => {
+    map[keyLabel + ' ' + (Object.keys(map).length + 1)] = '';
+    renderMapEditor(host);
+    queueSettingsSync();
+  };
+  add.appendChild(addBtn);
+  host.appendChild(add);
+}
+
+/* =========================================================================
+ * Selection + conversion rendering
+ * ========================================================================= */
+function kindChip(kind) {
+  const chip = document.createElement('span');
+  chip.className = 'tag kind k-' + (kind || 'DEFAULT');
+  chip.textContent = kind || 'NODE';
+  return chip;
+}
+
+function renderSelection(payload) {
+  const host = $('selection');
+  const nodes = payload && payload.selectedNodes ? payload.selectedNodes : [];
+  const badge = $('selectionCount');
+  badge.textContent = String(nodes.length);
+  badge.hidden = nodes.length === 0;
+  badge.classList.toggle('hot', nodes.length > 0);
+  host.innerHTML = '';
+  if (nodes.length === 0) {
+    const box = document.createElement('div');
+    box.className = 'empty';
+    box.innerHTML =
+      '<svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"/><path d="M8 8.5h.01M8 15.5v.01M16 8.5h.01M16 15.5v.01"/></svg>' +
+      'Nothing selected.<br>Click one or more <b>frames</b> on the canvas — screen frames work best.';
+    host.appendChild(box);
+    return;
+  }
+  for (const n of nodes.slice(0, 30)) {
+    const line = document.createElement('div');
+    line.className = 'node-row';
+    const name = document.createElement('span');
+    name.className = 'node-name';
+    name.textContent = n.name;
+    line.appendChild(kindChip(n.kind));
+    line.appendChild(name);
+    if (!n.convertable) {
+      const note = document.createElement('span');
+      note.className = 'skipped-note';
+      note.textContent = 'not convertible';
+      note.title = 'This layer type cannot become Compose code; pick its parent frame instead.';
+      line.appendChild(note);
+    }
+    host.appendChild(line);
+  }
+  if (nodes.length > 30) {
+    const more = document.createElement('div');
+    more.className = 'more-note';
+    more.textContent = '+' + (nodes.length - 30) + ' more layers in the selection…';
+    host.appendChild(more);
+  }
+}
+
+/* =========================================================================
+ * Component configuration descriptions (CCD) — visual editor (Config tab)
+ * =========================================================================
+ * ONE visual editor for the whole selection's component masters. Its fields
+ * mirror the parsed config (role, kind, assets, implementation, mapping +
+ * mapping arguments, note). When the selected masters disagree on a field
+ * the control shows a "multiple values" chip and no value is active: leaving
+ * it untouched keeps each component's own value on Apply, setting it (which
+ * clears the chip) overrides it on all of them. Apply snapshots the config
+ * per master and sends one `set-component-config` message each; the plugin
+ * normalizes, renders the block (prose preserved), rewrites the component
+ * description and re-posts the payload. Presets are named configurations
+ * persisted in client storage via the plugin (save/delete), restorable into
+ * the editor at any time.
+ * A collapsed "Edit as raw text" block (single-component selection only)
+ * keeps the template/comment-preserving text path for power users.
+ */
+
+const CC_DEFAULT_CONFIG = { role: null, kind: null, assets: 'auto', implementation: 'auto', mapping: null, mappingArgs: [], note: null };
+const CC_ROLES = ['button', 'card', 'fab', 'slider', 'switch', 'checkbox', 'chip', 'input', 'progress', 'badge', 'avatar', 'divider', 'listitem'];
+const CC_ROLE_LABELS = {
+  button: 'Button', card: 'Card', fab: 'Floating action button',
+  slider: 'Slider', switch: 'Switch', checkbox: 'Checkbox', chip: 'Chip',
+  input: 'Text input', progress: 'Progress indicator', badge: 'Badge',
+  avatar: 'Avatar', divider: 'Divider', listitem: 'List item',
+};
+const CC_MATERIAL_ROLES = ['card', 'button', 'fab'];
+const CC_ARG_SOURCES = ['text', 'icon', 'color', 'content', 'modifier'];
+
+let ccPayload = null; // last 'component-configs' payload
+let ccPresets = []; // saved presets (kept current by payload / 'component-presets')
+let ccEditor = null; // shared editor state { multi, role/kind/assets/implementation/mapping/note states, args rows }
+
+function sendComponentConfig(payload) {
+  parent.postMessage({ pluginMessage: { type: 'set-component-config', payload } }, '*');
+}
+
+/** True when a config object carries nothing beyond the defaults. */
+function ccIsDefault(config) {
+  return !config.role && !config.kind && config.assets === 'auto' && config.implementation === 'auto' &&
+    !config.mapping && (config.mappingArgs || []).length === 0 && !config.note;
+}
+
+/** One-line human summary reused for presets (serverside describeComposeConfig equivalent). */
+function ccShortSummary(config) {
+  const parts = [];
+  if (config.role) parts.push('role ' + config.role);
+  if (config.kind) parts.push('kind ' + config.kind);
+  if (config.assets && config.assets !== 'auto') parts.push('assets: ' + config.assets);
+  if (config.implementation && config.implementation !== 'auto') parts.push('implementation: ' + config.implementation);
+  if (config.mapping) parts.push('mapping ' + config.mapping);
+  if ((config.mappingArgs || []).length > 0) parts.push(config.mappingArgs.length + ' arg(s)');
+  if (config.note) parts.push('note');
+  return parts.length > 0 ? parts.join(' · ') : 'defaults';
+}
+
+/** Displays a value in the mixed chip (null shows as none). */
+function ccValueLabel(key, value) {
+  if (value === null || value === undefined || value === '') return 'none';
+  if (key === 'role' && CC_ROLE_LABELS[value]) return CC_ROLE_LABELS[value] + ' (' + value + ')';
+  return String(value);
+}
+
+/**
+ * Builds the editor state from the selection: per key, the distinct values
+ * across masters (masters without a config contribute the defaults).
+ */
+function ccBuildEditor(masters) {
+  const state = { multi: masters.length > 1 };
+  const buildKey = (pick) => {
+    const seen = [];
+    for (const master of masters) {
+      const config = master && master.config ? master.config : CC_DEFAULT_CONFIG;
+      const value = pick(config);
+      const sig = JSON.stringify(value);
+      if (!seen.some((e) => e.sig === sig)) seen.push({ sig, value });
+    }
+    if (seen.length === 1) return { mixed: false, values: [], value: seen[0].value, touched: false };
+    return { mixed: true, values: seen.map((e) => e.value), value: null, touched: false };
+  };
+  state.role = buildKey((c) => c.role ?? null);
+  state.kind = buildKey((c) => c.kind ?? null);
+  state.assets = buildKey((c) => c.assets || 'auto');
+  state.implementation = buildKey((c) => c.implementation || 'auto');
+  state.mapping = buildKey((c) => c.mapping ?? null);
+  state.note = buildKey((c) => c.note ?? null);
+  state.args = buildKey((c) => JSON.stringify(c.mappingArgs || []));
+  // mappingArgs compare serialized; unpack rows for the editor.
+  if (!state.args.mixed) {
+    const args = JSON.parse(state.args.value || '[]');
+    state.args.value = args;
+    state.args.rows = args.map((a) => ({
+      argument: a.argument,
+      sourceKind: a.source && a.source.kind ? a.source.kind : 'constant',
+      value: a.source && a.source.kind === 'constant' ? String(a.source.value ?? '') : '',
+    }));
+  } else {
+    state.args.rows = [];
+  }
+  return state;
+}
+
+/** The value a control currently displays (null while mixed). */
+function ccDisplayValue(key) {
+  const st = ccEditor ? ccEditor[key] : null;
+  return st && !st.mixed ? st.value : null;
+}
+
+/** Sets a field in the editor state (resolving a mixed key overrides all). */
+function ccTouch(key, value) {
+  if (!ccEditor) return;
+  ccEditor[key].mixed = false;
+  ccEditor[key].values = [];
+  ccEditor[key].value = value;
+  ccEditor[key].touched = true;
+  renderComponentEditorBody();
+}
+
+/** The per-master config snapshot this Apply will write (untouched keys keep their own). */
+function ccConfigForMaster(master) {
+  const base = master && master.config ? master.config : CC_DEFAULT_CONFIG;
+  const own = (key, fallback) => {
+    const st = ccEditor[key];
+    return st.touched && !st.mixed ? st.value : fallback;
+  };
+  return {
+    role: own('role', base.role ?? null),
+    kind: own('kind', base.kind ?? null),
+    assets: own('assets', base.assets || 'auto'),
+    implementation: own('implementation', base.implementation || 'auto'),
+    mapping: own('mapping', base.mapping ?? null),
+    note: own('note', base.note ?? null),
+    mappingArgs: ccEditor.args.touched && !ccEditor.args.mixed
+      ? ccEditor.args.rows.map((row) => ({
+          argument: row.argument,
+          source: row.sourceKind === 'constant' ? { kind: 'constant', value: row.value } : { kind: row.sourceKind },
+        }))
+      : (base.mappingArgs || []),
+  };
+}
+
+/** Entry: the payload arrives after selection changes and after each write. */
+function renderComponentConfigs(payload) {
+  ccPayload = payload || null;
+  if (ccPayload && ccPayload.presets) ccPresets = ccPayload.presets;
+  const masters = ccPayload && ccPayload.masters ? ccPayload.masters : [];
+  const card = $('configCard');
+  const emptyState = $('configEmptyState');
+  const host = $('configHost');
+  if (!card || !host) return;
+  if (masters.length === 0) {
+    card.hidden = true;
+    if (emptyState) emptyState.style.display = '';
+    host.innerHTML = '';
+    ccEditor = null;
+    renderConfigBadges(0);
+    renderPresetBar();
+    return;
+  }
+  card.hidden = false;
+  if (emptyState) emptyState.style.display = 'none';
+  ccEditor = ccBuildEditor(masters);
+  renderConfigBadges(masters.length);
+  renderComponentEditorBody();
+  renderPresetBar();
+}
+
+function renderConfigBadges(count) {
+  const inCard = $('configCount');
+  const onTab = $('configBadge');
+  for (const badge of [inCard, onTab]) {
+    if (!badge) continue;
+    badge.textContent = String(count);
+    badge.hidden = count === 0;
+  }
+}
+
+/** Builds the editor card from the shared state (fields already know it). */
+function renderComponentEditorBody() {
+  const host = $('configHost');
+  if (!host) return;
+  const masters = ccPayload && ccPayload.masters ? ccPayload.masters : [];
+  if (!ccEditor || masters.length === 0) return;
+  host.innerHTML = '';
+
+  const item = document.createElement('div');
+  item.className = 'config-item';
+
+  const head = document.createElement('div');
+  head.className = 'config-head';
+  head.appendChild(kindChip('COMPONENT'));
+  const name = document.createElement('span');
+  name.className = 'config-name';
+  name.textContent = ccEditor.multi
+    ? 'Shared editor — ' + masters.length + ' components'
+    : masters[0].masterName;
+  if (ccEditor.multi) name.title = masters.slice(0, 6).map((m) => m.masterName).join(' · ');
+  head.appendChild(name);
+  item.appendChild(head);
+
+  // Per-master rows: current value summary + parse issues.
+  const shown = masters.slice(0, 4);
+  for (const master of shown) {
+    const row = document.createElement('div');
+    row.className = 'config-summary';
+    const bits = ['• ' + master.masterName];
+    if (master.summary) bits.push('Current: ' + master.summary);
+    else bits.push('not configured');
+    row.textContent = bits.join(' — ');
+    item.appendChild(row);
+    if (master.issues && master.issues.length > 0) {
+      const issues = document.createElement('p');
+      issues.className = 'config-issues';
+      issues.textContent = '⚠ ' + master.masterName + ': ' + master.issues.join(' ');
+      item.appendChild(issues);
+    }
+  }
+  if (masters.length > shown.length) {
+    const more = document.createElement('div');
+    more.className = 'more-note';
+    more.textContent = '+' + (masters.length - shown.length) + ' more components in the selection…';
+    item.appendChild(more);
+  }
+
+  item.appendChild(ccFieldRole());
+  item.appendChild(ccFieldKind());
+  item.appendChild(ccFieldAssets());
+  if (ccImplementationVisible()) item.appendChild(ccFieldImplementation());
+  item.appendChild(ccFieldMapping());
+  item.appendChild(ccFieldArgs());
+  item.appendChild(ccFieldNote());
+
+  const hints = ccFootHints();
+  if (hints) item.appendChild(hints);
+  item.appendChild(ccActionsRow(masters));
+
+  if (!ccEditor.multi) item.appendChild(ccAdvancedTextBlock(masters[0]));
+  host.appendChild(item);
+}
+
+/** True when the role resolves to a Material-implementation role. */
+function ccImplementationVisible() {
+  const st = ccEditor.role;
+  return !st.mixed && CC_MATERIAL_ROLES.includes(st.value);
+}
+
+function ccMixedChip(key, labels) {
+  const chip = document.createElement('span');
+  chip.className = 'cc-mixed-chip';
+  chip.textContent = 'multiple values: ' + labels;
+  chip.title = 'The selected components carry different values here. Leave it untouched to keep each component\'s own on Apply, or set a value on the control to override all of them.';
+  return chip;
+}
+
+function ccField(labelText, control, key) {
+  const field = document.createElement('div');
+  field.className = 'cc-field';
+  const label = document.createElement('div');
+  label.className = 'cc-label';
+  const text = document.createElement('span');
+  text.textContent = labelText;
+  label.appendChild(text);
+  const st = ccEditor ? ccEditor[key] : null;
+  if (st && st.mixed) {
+    const display = st.values.map((v) => (key === 'args' ? (v.length > 30 ? v.slice(0, 30) + '…' : v) : ccValueLabel(key, v)));
+    label.appendChild(ccMixedChip(key, display.join(' | ')));
+  }
+  field.appendChild(label);
+  field.appendChild(control);
+  return field;
+}
+
+function ccFieldRole() {
+  const select = document.createElement('select');
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = 'none — custom emission, no role parameters';
+  select.appendChild(none);
+  for (const role of CC_ROLES) {
+    const opt = document.createElement('option');
+    opt.value = role;
+    opt.textContent = role + ' — ' + CC_ROLE_LABELS[role];
+    select.appendChild(opt);
+  }
+  if (ccEditor.role.mixed) {
+    const mixed = document.createElement('option');
+    mixed.value = '';
+    mixed.textContent = '(multiple values)';
+    mixed.selected = true; mixed.disabled = true;
+    select.appendChild(mixed);
+  } else select.value = ccEditor.role.value || '';
+  select.onchange = () => ccTouch('role', select.value === '' ? null : select.value);
+  return ccField('Role', select, 'role');
+}
+
+function ccFieldKind() {
+  const seg = document.createElement('div');
+  seg.className = 'segmented';
+  const options = [
+    ['none', 'none'],
+    ['icon', 'icon'],
+    ['image', 'image'],
+    ['vector', 'vector'],
+  ];
+  for (const [value, label] of options) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'seg-btn' + (!ccEditor.kind.mixed && (ccEditor.kind.value || 'none') === value ? ' active' : '');
+    btn.textContent = label;
+    btn.onclick = () => ccTouch('kind', value === 'none' ? null : value);
+    seg.appendChild(btn);
+  }
+  return ccField('Asset kind', seg, 'kind');
+}
+
+function ccFieldAssets() {
+  const seg = document.createElement('div');
+  seg.className = 'segmented';
+  const options = [['auto', 'auto'], ['export', 'export'], ['code', 'code']];
+  for (const [value, label] of options) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'seg-btn' + (!ccEditor.assets.mixed && ccEditor.assets.value === value ? ' active' : '');
+    btn.textContent = label;
+    btn.onclick = () => ccTouch('assets', value);
+    seg.appendChild(btn);
+  }
+  return ccField('Assets policy', seg, 'assets');
+}
+
+function ccFieldImplementation() {
+  const seg = document.createElement('div');
+  seg.className = 'segmented';
+  for (const value of ['auto', 'custom']) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'seg-btn' + (!ccEditor.implementation.mixed && ccEditor.implementation.value === value ? ' active' : '');
+    btn.textContent = value;
+    btn.onclick = () => ccTouch('implementation', value);
+    seg.appendChild(btn);
+  }
+  return ccField('Implementation (Material match)', seg, 'implementation');
+}
+
+function ccFieldMapping() {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'e.g. com.example.ui.MyButton';
+  input.spellcheck = false;
+  if (ccEditor.mapping.mixed) {
+    input.value = '';
+    input.placeholder = '(multiple values — type one to override all)';
+  } else input.value = ccEditor.mapping.value || '';
+  input.oninput = () => {
+    if (!ccEditor) return;
+    ccEditor.mapping.mixed = false;
+    ccEditor.mapping.values = [];
+    ccEditor.mapping.value = input.value;
+    ccEditor.mapping.touched = true;
+  };
+  return ccField('Mapping (app composable)', input, 'mapping');
+}
+
+function ccFieldArgs() {
+  const wrap = document.createElement('div');
+  const mappingActive = !!ccDisplayValue('mapping');
+  if (ccEditor.args.mixed && !mappingActive) {
+    const mixedNote = document.createElement('p');
+    mixedNote.className = 'cc-argsummary';
+    mixedNote.textContent = 'Components carry different arguments; set a mapping first to edit them.';
+    wrap.appendChild(mixedNote);
+  }
+  if (ccEditor.args.mixed && mappingActive) {
+    const mixedNote = document.createElement('p');
+    mixedNote.className = 'cc-argsummary';
+    mixedNote.textContent = 'Components carry different arguments (' + ccEditor.args.values.map((v) => (v.length > 30 ? v.slice(0, 30) + '…' : v)).join(' | ') + '). Edit the rows below to override them on all; leave them untouched to keep each.';
+    wrap.appendChild(mixedNote);
+  }
+  if (!mappingActive) {
+    const hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent = 'Mapping arguments fill the target composable\'s parameters once a mapping is set (they edit rows below). Sources: ' + CC_ARG_SOURCES.map((s) => '@' + s).join(' · ') + '. Quoted/typed values are constants.';
+    wrap.appendChild(hint);
+  }
+  const rows = mappingActive && !ccEditor.args.mixed ? ccEditor.args.rows : [];
+  for (const row of rows) ccArgRow(wrap, row);
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'secondary';
+  add.textContent = '+ Add argument';
+  add.onclick = () => {
+    ccEditor.args.rows.push({ argument: '', sourceKind: 'constant', value: '' });
+    ccTouchArgs();
+  };
+  wrap.appendChild(add);
+  return ccField('Mapping arguments', wrap, 'args');
+
+  function ccTouchArgs() {
+    ccEditor.args.mixed = false;
+    ccEditor.args.values = [];
+    ccEditor.args.touched = true;
+    renderComponentEditorBody();
+  }
+
+  function ccArgRow(parent, row) {
+    const grid = document.createElement('div');
+    grid.className = 'cc-argrow';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.placeholder = 'param';
+    nameInput.value = row.argument === null ? '' : row.argument;
+    nameInput.oninput = () => {
+      row.argument = nameInput.value;
+      ccEditor.args.touched = true;
+    };
+    const sourceSelect = document.createElement('select');
+    for (const src of ['constant'].concat(CC_ARG_SOURCES)) {
+      const opt = document.createElement('option');
+      opt.value = src;
+      opt.textContent = src === 'constant' ? 'constant' : '@' + src;
+      sourceSelect.appendChild(opt);
+    }
+    sourceSelect.value = row.sourceKind || 'constant';
+    sourceSelect.onchange = () => {
+      row.sourceKind = sourceSelect.value;
+      row.value = sourceSelect.value === 'constant' ? row.value : '';
+      ccEditor.args.touched = true;
+      renderComponentEditorBody();
+    };
+    const valueInput = document.createElement('input');
+    valueInput.type = 'text';
+    valueInput.placeholder = 'e.g. "Sign In"';
+    valueInput.value = row.sourceKind === 'constant' ? row.value : '';
+    valueInput.disabled = row.sourceKind !== 'constant';
+    valueInput.oninput = () => {
+      row.value = valueInput.value;
+      ccEditor.args.touched = true;
+    };
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'del';
+    del.textContent = '✕';
+    del.onclick = () => {
+      const at = ccEditor.args.rows.indexOf(row);
+      if (at >= 0) ccEditor.args.rows.splice(at, 1);
+      ccTouchArgs();
+    };
+    grid.appendChild(nameInput);
+    grid.appendChild(sourceSelect);
+    grid.appendChild(valueInput);
+    grid.appendChild(del);
+    parent.appendChild(grid);
+  }
+}
+
+function ccFieldNote() {
+  const ta = document.createElement('textarea');
+  ta.spellcheck = false;
+  ta.placeholder = 'Copied into the generated file as a comment';
+  ta.style.minHeight = '42px';
+  if (ccEditor.note.mixed) {
+    ta.placeholder = '(multiple values — type one to override all)';
+  } else ta.value = ccEditor.note.value || '';
+  ta.oninput = () => {
+    if (!ccEditor) return;
+    ccEditor.note.mixed = false;
+    ccEditor.note.values = [];
+    ccEditor.note.value = ta.value;
+    ccEditor.note.touched = true;
+  };
+  return ccField('Note', ta, 'note');
+}
+
+/** Field-state hints: precedence between mapping / kind / assets policy, or null when none applies. */
+function ccFootHints() {
+  const mapping = ccDisplayValue('mapping');
+  const kind = ccDisplayValue('kind');
+  const assets = ccDisplayValue('assets');
+  const role = ccDisplayValue('role');
+  const notes = [];
+  if (mapping && (role || kind || (assets && assets !== 'auto'))) {
+    notes.push('mapping takes precedence — role and asset directives are ignored for generation until you clear the mapping');
+  }
+  if (assets === 'code' && kind) notes.push('assets: code wins over kind — the component is always generated as code');
+  if (notes.length === 0) return null;
+  const foot = document.createElement('div');
+  foot.className = 'config-summary';
+  foot.textContent = notes.join('. ');
+  return foot;
+}
+
+/** Apply/Remove row plus preset capture + copy for the whole shared editor. */
+function ccActionsRow(masters) {
+  const actions = document.createElement('div');
+  actions.className = 'config-actions';
+
+  const apply = document.createElement('button');
+  apply.type = 'button';
+  apply.className = 'primary';
+  apply.textContent = ccEditor.multi ? 'Apply to ' + masters.length + ' components' : 'Apply';
+  apply.title = 'Writes the configuration into each component description (prose kept)';
+  apply.onclick = () => {
+    const perMaster = [];
+    let allDefaults = 0;
+    for (const master of masters) {
+      const config = ccConfigForMaster(master);
+      if (ccIsDefault(config)) {
+        allDefaults += 1;
+        if (master.hasConfig) perMaster.push({ masterId: master.masterId, remove: true });
+      } else {
+        perMaster.push({ masterId: master.masterId, config });
+      }
+    }
+    for (const payload of perMaster) sendComponentConfig(payload);
+    const removed = perMaster.filter((p) => p.remove).length;
+    const written = perMaster.length - removed;
+    const bits = [];
+    if (written > 0) bits.push(written + ' updated');
+    if (removed > 0) bits.push(removed + ' cleared');
+    if (allDefaults > 0) bits.push(allDefaults + ' untouched (defaults only)');
+    setStatus(bits.length > 0 ? 'Configuration applied — ' + bits.join(', ') + '.' : 'Nothing to apply yet — set a value first.', false);
+  };
+  actions.appendChild(apply);
+
+  if (masters.some((m) => m.hasConfig)) {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'secondary btn-danger-ghost';
+    remove.textContent = ccEditor.multi ? 'Remove from all' : 'Remove';
+    remove.title = 'Strip the compose-studio: block from every configured component (prose kept)';
+    remove.onclick = () => {
+      for (const master of masters) {
+        if (master.hasConfig) sendComponentConfig({ masterId: master.masterId, remove: true });
+      }
+    };
+    actions.appendChild(remove);
+  }
+
+  if (!ccEditor.multi) {
+    const master = masters[0];
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'secondary';
+    copy.textContent = master.hasConfig ? 'Copy block' : 'Copy as text';
+    copy.title = 'Copies the current configuration block including the compose-studio: marker';
+    copy.onclick = () => {
+      const block = master.blockText && master.blockText.trim() ? 'compose-studio:\n' + master.blockText.trim() : '';
+      const full = master.prose ? master.prose + '\n\n' + block : block;
+      copyText(full).then(
+        () => setStatus('Copied the configuration to the clipboard.'),
+        () => setStatus('Clipboard is unavailable; select the text and copy it manually.', true),
+      );
+    };
+    actions.appendChild(copy);
+  }
+
+  const filler = document.createElement('span');
+  filler.className = 'config-filler';
+  actions.appendChild(filler);
+  const savePreset = document.createElement('button');
+  savePreset.type = 'button';
+  savePreset.className = 'secondary';
+  savePreset.textContent = 'Save as preset…';
+  savePreset.title = 'Capture the values this Apply would write as a reusable, named preset';
+  savePreset.onclick = () => {
+    const input = $('presetNameInput');
+    if (!input) return;
+    $('presetSaveBtn').style.display = 'none';
+    const saveRow = $('presetSaveRow');
+    saveRow.style.display = '';
+    $('presetSaveOk').style.display = '';
+    $('presetSaveCancel').style.display = '';
+    input.value = '';
+    input.focus();
+  };
+  actions.appendChild(savePreset);
+  return actions;
+}
+
+/** Collapsible raw-text editor for the single-selection case (comments kept verbatim). */
+function ccAdvancedTextBlock(master) {
+  const details = document.createElement('details');
+  details.className = 'config-advanced';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Edit as raw text (advanced — preserves comments)';
+  details.appendChild(summary);
+
+  const ta = document.createElement('textarea');
+  ta.className = 'config-advanced';
+  ta.spellcheck = false;
+  ta.value = master.hasConfig && master.blockText != null
+    ? master.blockText
+    : (ccPayload && ccPayload.template ? ccPayload.template.split('\n').slice(1).join('\n') : '');
+
+  const actions = document.createElement('div');
+  actions.className = 'config-actions';
+  const apply = document.createElement('button');
+  apply.type = 'button';
+  apply.className = 'secondary';
+  apply.textContent = master.hasConfig ? 'Apply raw text' : 'Add template';
+  apply.onclick = () => sendComponentConfig({ masterId: master.masterId, yaml: ta.value.trim() });
+  actions.appendChild(apply);
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = 'Text is applied as-is (without the compose-studio: marker line) — comments stay.';
+  actions.appendChild(hint);
+
+  details.appendChild(ta);
+  details.appendChild(actions);
+  return details;
+}
+
+/* ------------------------------ presets ------------------------------ */
+
+function renderPresetBar() {
+  const select = $('presetSelect');
+  const del = $('presetDeleteBtn');
+  const count = $('presetCount');
+  if (!select) return;
+  select.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = ccPresets.length === 0
+    ? 'No presets yet — configure a component and Save current…'
+    : ccPresets.length + ' preset(s) — pick one to load';
+  select.appendChild(placeholder);
+  for (const preset of ccPresets) {
+    const opt = document.createElement('option');
+    opt.value = preset.name;
+    opt.textContent = preset.name + ' — ' + ccShortSummary(preset.config);
+    select.appendChild(opt);
+  }
+  select.value = '';
+  if (del) del.disabled = true;
+  if (count) {
+    count.textContent = String(ccPresets.length);
+    count.hidden = ccPresets.length === 0;
+  }
+  if ($('presetSaveRow')) $('presetSaveRow').style.display = 'none';
+  if ($('presetSaveOk')) $('presetSaveOk').style.display = 'none';
+  if ($('presetSaveCancel')) $('presetSaveCancel').style.display = 'none';
+  if ($('presetSaveBtn')) $('presetSaveBtn').style.display = '';
+}
+
+/** Loads a preset's values into the shared editor (Apply still decides). */
+function loadComponentPreset(name) {
+  const preset = ccPresets.find((p) => p.name === name);
+  if (!preset || !ccEditor) return;
+  const config = preset.config;
+  for (const key of ['role', 'kind', 'assets', 'implementation', 'mapping', 'note']) {
+    ccEditor[key].mixed = false;
+    ccEditor[key].values = [];
+    ccEditor[key].value = config[key] ?? null;
+    ccEditor[key].touched = true;
+  }
+  ccEditor.args.mixed = false;
+  ccEditor.args.values = [];
+  ccEditor.args.touched = true;
+  ccEditor.args.value = config.mappingArgs || [];
+  ccEditor.args.rows = (config.mappingArgs || []).map((a) => ({
+    argument: a.argument,
+    sourceKind: a.source && a.source.kind ? a.source.kind : 'constant',
+    value: a.source && a.source.kind === 'constant' ? String(a.source.value ?? '') : '',
+  }));
+  renderComponentEditorBody();
+}
+
+/** Static preset-bar wiring (once at boot). */
+function wireComponentPresets() {
+  const select = $('presetSelect');
+  if (select) {
+    select.onchange = () => {
+      if (select.value) {
+        loadComponentPreset(select.value);
+        const del = $('presetDeleteBtn');
+        if (del) del.disabled = false;
+      }
+    };
+  }
+  const del = $('presetDeleteBtn');
+  if (del) {
+    del.onclick = () => {
+      const value = select && select.value;
+      if (!value) return;
+      sendPresetMessage('delete-component-preset', { name: value });
+    };
+  }
+}
+
+/** Sends save/delete for presets. */
+function sendPresetMessage(type, payload) {
+  parent.postMessage({ pluginMessage: { type, payload } }, '*');
+}
+
+/** Captures the merged current editor state as a preset payload. */
+function currentPresetConfig() {
+  const masters = ccPayload && ccPayload.masters ? ccPayload.masters : [];
+  // Untouched fields capture the first configured master's value (mixed
+  // selections have no single "current" — the guide tells users to tweak
+  // before saving when that fallback is not what they want).
+  const first = masters.find((m) => m && m.config) || null;
+  const base = first ? first.config : CC_DEFAULT_CONFIG;
+  if (!ccEditor) return JSON.parse(JSON.stringify(CC_DEFAULT_CONFIG));
+  const own = (key, fallback) => {
+    const st = ccEditor[key];
+    return st.touched && !st.mixed ? st.value : fallback;
+  };
+  return {
+    role: own('role', base.role ?? null),
+    kind: own('kind', base.kind ?? null),
+    assets: own('assets', base.assets || 'auto'),
+    implementation: own('implementation', base.implementation || 'auto'),
+    mapping: own('mapping', base.mapping ?? null),
+    note: own('note', base.note ?? null),
+    mappingArgs: ccEditor.args.touched && !ccEditor.args.mixed
+      ? ccEditor.args.rows.map((row) => ({
+          argument: row.argument,
+          source: row.sourceKind === 'constant' ? { kind: 'constant', value: row.value } : { kind: row.sourceKind },
+        }))
+      : (base.mappingArgs || []),
+  };
+}
+
+function wirePresetSaveForm() {
+  const saveBtn = $('presetSaveBtn');
+  const ok = $('presetSaveOk');
+  const cancel = $('presetSaveCancel');
+  const input = $('presetNameInput');
+  if (!saveBtn || !ok || !cancel || !input) return;
+  const reveal = () => {
+    saveBtn.style.display = 'none';
+    $('presetSaveRow').style.display = '';
+    ok.style.display = '';
+    cancel.style.display = '';
+    input.value = '';
+    input.focus();
+  };
+  saveBtn.onclick = reveal;
+  ok.onclick = () => {
+    const name = input.value.trim();
+    if (!name) {
+      setStatus('Give the preset a name first.', true);
+      input.focus();
+      return;
+    }
+    sendPresetMessage('save-component-preset', { name, config: currentPresetConfig() });
+    setStatus('Saving preset "' + name + '"…', false);
+    $('presetSaveRow').style.display = 'none';
+    ok.style.display = 'none';
+    cancel.style.display = 'none';
+    saveBtn.style.display = '';
+  };
+  cancel.onclick = () => {
+    $('presetSaveRow').style.display = 'none';
+    ok.style.display = 'none';
+    cancel.style.display = 'none';
+    saveBtn.style.display = '';
+  };
+}
+
+function renderConversion(data) {
+  converted = true;
+  lastConversion.diagnostics = data.diagnostics || [];
+  lastConversion.files = data.files || [];
+  lastConversion.imageAssets = data.imageAssets || [];
+  lastConversion.vectorAssets = data.vectorAssets || [];
+
+  diagFilter = 'all'; // fresh results always start unfiltered
+  activeFileIndex = -1; // fresh results always start on the first file (renderFileTabs normalizes)
+  resetExportSelection(); // fresh results always start selected
+  renderDiagnosticsSection();
+  renderFileTabs();
+  renderAssetsSection();
+  syncExportPanel(); // masters/counts/button over the fresh checkboxes
+
+  // Fresh results re-open the collapsed Output sections; the files section
+  // is pointless without files and yields to the diagnostics instead.
+  $('resultsSection').open = true;
+  $('filesSection').open =
+    lastConversion.files.length > 0 || lastConversion.imageAssets.length > 0 || lastConversion.vectorAssets.length > 0;
+  const diagBadge = $('diagCount');
+  diagBadge.textContent = String(lastConversion.diagnostics.length);
+  diagBadge.hidden = false;
+  diagBadge.classList.toggle('hot', lastConversion.diagnostics.length > 0);
+  // filesCount/dsCount badges are owned by renderFileTabs (they split by design-system files).
+  const assetBadge = $('assetCount');
+  const assetTotal = lastConversion.imageAssets.length + lastConversion.vectorAssets.length;
+  assetBadge.textContent = String(assetTotal);
+  assetBadge.hidden = assetTotal === 0;
+  assetBadge.classList.toggle('hot', assetTotal > 0);
+
+  // Pulse the Output tab badge and land on the results.
+  const badge = $('outputBadge');
+  const total = lastConversion.diagnostics.length;
+  if (total > 0) {
+    badge.textContent = String(total);
+    badge.hidden = false;
+    badge.classList.remove('pulse');
+    void badge.offsetWidth; // restart the animation
+    badge.classList.add('pulse');
+  } else {
+    badge.hidden = true;
+  }
+  const run = new Date();
+  const assetCount = lastConversion.imageAssets.length + lastConversion.vectorAssets.length;
+  $('lastRun').textContent = 'Last run ' + (run.getHours() < 10 ? '0' : '') + run.getHours() + ':' + (run.getMinutes() < 10 ? '0' : '') + run.getMinutes() +
+    ' · ' + lastConversion.files.length + ' file(s) · ' + assetCount + ' asset(s) · ' + total + ' note(s)';
+  setStatus('Conversion finished — ' + lastConversion.files.length + ' file(s), ' + assetCount + ' asset(s), ' + total + ' diagnostic(s).');
+  switchTab('output');
+}
+
+/**
+ * Assets preview (Output tab): one tile per exported asset with a live
+ * thumbnail (rasters as data-URL <img>, vectors as sanitized inline <svg>)
+ * plus its resolved export format. Rasters carry `ext` from the sandbox;
+ * vector entries are labeled by their `fmt` (SVG file vs ImageVector code).
+ */
+const ASSETS_PREVIEW_CAP = 100;
+
+/** Guards preview markup: SVG from this document's export never executes. */
+function sanitizeSvgSource(svg) {
+  return String(svg || '')
+    .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<script[^>]*\/?>/gi, '')
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject\s*>/gi, '')
+    .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*')/gi, '');
+}
+
+function assetTile(entry) {
+  const tile = document.createElement('div');
+  tile.className = 'asset-tile';
+  const thumb = document.createElement('div');
+  thumb.className = 'asset-thumb';
+  if (entry.dataUrl) {
+    const img = document.createElement('img');
+    img.src = entry.dataUrl;
+    img.alt = entry.name;
+    img.loading = 'lazy';
+    thumb.appendChild(img);
+  } else {
+    thumb.innerHTML = entry.thumbSvg;
+  }
+  if (entry.tileClass) tile.classList.add(entry.tileClass);
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.className = 'tile-check';
+  check.dataset.exportId = entry.id;
+  if (entry.pinned) {
+    tile.classList.add('pinned');
+    check.disabled = true;
+    check.title = 'ImageVector assets have no standalone file — they compile into Icons.kt; tick Icons.kt in the files card to export them.';
+  } else {
+    tile.classList.add('selectable');
+    tile.title = 'Toggle ' + entry.name + ' in the ZIP';
+    check.checked = exportSet('assets').has(entry.id);
+    // A tick anywhere on the tile toggles it out of / into the ZIP.
+    tile.onclick = () => {
+      check.checked = !check.checked;
+      check.onchange();
+    };
+    check.onclick = (e) => e.stopPropagation();
+    check.onchange = () => {
+      if (check.checked) exportSet('assets').add(entry.id);
+      else exportSet('assets').delete(entry.id);
+      syncExportPanel();
+    };
+  }
+  const name = document.createElement('span');
+  name.className = 'asset-name';
+  name.textContent = entry.name;
+  name.title = entry.name + (entry.hint ? ' — ' + entry.hint : '');
+  const tag = document.createElement('span');
+  tag.className = 'asset-tag';
+  tag.textContent = entry.label;
+  tile.appendChild(check);
+  tile.appendChild(thumb);
+  tile.appendChild(name);
+  tile.appendChild(tag);
+  return tile;
+}
+
+function renderAssetsSection() {
+  const grid = $('assetsGrid');
+  const raster = lastConversion.imageAssets.map((a) => ({
+    id: 'img:' + a.assetName,
+    name: a.assetName,
+    label: (a.ext || 'png').toUpperCase() + ' asset',
+    hint: 'res/drawable-nodpi/' + a.assetName + '.' + (a.ext || 'png'),
+    dataUrl: 'data:image/' + (a.ext === 'jpg' ? 'jpeg' : 'png') + ';base64,' + a.bytesBase64,
+  }));
+  const vector = lastConversion.vectorAssets.map((a) => ({
+    id: 'vec:' + a.assetName,
+    name: a.assetName,
+    label: a.fmt === 'imagevector' ? 'ImageVector' : 'SVG asset',
+    hint: a.fmt === 'imagevector' ? 'compiled into the generated Icons.kt' : 'vectors/' + a.assetName + '.svg',
+    thumbSvg: sanitizeSvgSource(a.content),
+    tileClass: a.fmt === 'imagevector' ? 't-ImageVector' : 't-SVG',
+    pinned: a.fmt === 'imagevector',
+  }));
+  const entries = raster.concat(vector);
+  const total = entries.length;
+  // The whole Assets subgroup (divider, master, hint, grid) only exists when there is something to preview.
+  $('assetGroup').style.display = total > 0 ? '' : 'none';
+  grid.style.display = total > 0 ? 'grid' : 'none';
+  // The selection controls live on the tiles; show their master only when there is something to select.
+  $('assetsExportMaster').style.display = total > 0 ? '' : 'none';
+  // Pinned (ImageVector) tiles ride via Icons.kt — explain it where they are picked.
+  $('exportVectorHint').style.display = entries.some((e) => e.pinned) ? '' : 'none';
+  grid.innerHTML = '';
+  if (total === 0) return;
+  const shown = entries.slice(0, ASSETS_PREVIEW_CAP);
+  for (const entry of shown) grid.appendChild(assetTile(entry));
+  if (total > shown.length) {
+    const more = document.createElement('div');
+    more.className = 'asset-more';
+    more.textContent = '+' + (total - shown.length) + ' more asset(s) — beyond the preview cap; they follow the Assets master above';
+    grid.appendChild(more);
+  }
+}
+
+/**
+ * Diagnostics section: the level chips ("N errors" / "N warnings" / "N notes")
+ * are clickable filters — clicking one shows only that severity, clicking
+ * again (or "all") resets the view. File/asset counts stay informational.
+ * A trailing "Copy" button copies exactly the filtered list the user sees
+ * (the full filtered list, not the 200-row render cap).
+ */
+function visibleDiagnostics() {
+  return diagFilter === 'all'
+    ? lastConversion.diagnostics
+    : lastConversion.diagnostics.filter((d) => d.level === diagFilter);
+}
+
+const DIAG_LEVEL_NOUNS = { all: 'diagnostics', error: 'errors', warning: 'warnings', info: 'notes' };
+
+/** One plain-text line per diagnostic so severity survives a paste into an issue. */
+function formatDiagnosticsText(list) {
+  return list
+    .map((d) =>
+      '[' + d.level + '] ' + d.message +
+      (d.nodeName ? ' — ' + d.nodeName + (d.nodeKind ? ' (' + d.nodeKind + ')' : '') : ''),
+    )
+    .join('\n');
+}
+
+function copyVisibleDiagnostics() {
+  const list = visibleDiagnostics();
+  if (list.length === 0) {
+    setStatus(
+      lastConversion.diagnostics.length
+        ? 'No ' + DIAG_LEVEL_NOUNS[diagFilter] + ' to copy — switch to "all" or another level.'
+        : 'Clean conversion — nothing to copy.',
+      true,
+    );
+    return;
+  }
+  copyText(formatDiagnosticsText(list)).then(
+    () => setStatus('Copied ' + list.length + ' ' + DIAG_LEVEL_NOUNS[diagFilter] + ' to the clipboard.'),
+    () => setStatus('Clipboard is unavailable; diagnostics cannot be copied automatically.', true),
+  );
+}
+
+function renderDiagnosticsSection() {
+  const counts = { error: 0, warning: 0, info: 0 };
+  for (const d of lastConversion.diagnostics) counts[d.level] = (counts[d.level] || 0) + 1;
+
+  const summary = $('diagSummary');
+  summary.innerHTML = '';
+  const chip = (label, level, cls, title) => {
+    const active = diagFilter === level;
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'sevchip' + (cls ? ' ' + cls : '') + (active ? ' active' : '');
+    el.title = title;
+    el.innerHTML = '<span class="n">' + label + '</span>';
+    el.onclick = () => { diagFilter = level; renderDiagnosticsSection(); };
+    summary.appendChild(el);
+  };
+  chip('All ' + (counts.error + counts.warning + counts.info), 'all', '', 'Show all diagnostics');
+  chip(counts.error + ' errors', 'error', 'c-error', 'Show only errors');
+  chip(counts.warning + ' warnings', 'warning', 'c-warning', 'Show only warnings');
+  chip(counts.info + ' notes', 'info', 'c-info', 'Show only notes');
+  const assetCount = lastConversion.imageAssets.length + lastConversion.vectorAssets.length;
+  chip(lastConversion.files.length + ' files · ' + assetCount + ' assets', null, '', 'Generated Kotlin files and exported assets');
+  summary.lastChild.disabled = true;
+  summary.lastChild.style.cursor = 'default';
+
+  const visible = lastConversion.diagnostics.length === 0 ? [] : visibleDiagnostics();
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'sevchip push';
+  copyBtn.title = lastConversion.diagnostics.length === 0
+    ? 'Clean conversion — nothing to copy'
+    : visible.length === 0
+      ? 'No ' + DIAG_LEVEL_NOUNS[diagFilter] + ' to copy'
+      : 'Copy the ' + visible.length + ' visible ' + DIAG_LEVEL_NOUNS[diagFilter] + ' as plain text';
+  copyBtn.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>' +
+    '<span class="n">Copy</span>';
+  copyBtn.onclick = copyVisibleDiagnostics;
+  summary.appendChild(copyBtn);
+
+  const diagList = $('diagList');
+  diagList.innerHTML = '';
+  const filtered = diagFilter === 'all' ? lastConversion.diagnostics : lastConversion.diagnostics.filter((d) => d.level === diagFilter);
+  if (lastConversion.diagnostics.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty clean';
+    empty.innerHTML =
+      '<svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.5 2.5L16 9.5"/></svg>' +
+      'Clean conversion — nothing approximated, nothing skipped.';
+    diagList.appendChild(empty);
+    return;
+  }
+  if (filtered.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No diagnostics of this level.';
+    diagList.appendChild(empty);
+    return;
+  }
+  for (const d of filtered.slice(0, 200)) {
+    const item = document.createElement('div');
+    item.className = 'diag ' + d.level;
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 24 24');
+    icon.setAttribute('class', 'sev-icon');
+    icon.setAttribute('fill', 'currentColor');
+    if (d.level === 'error') {
+      icon.innerHTML = '<circle cx="12" cy="12" r="10" opacity="0.15"/><path d="M15.5 8.5l-7 7M8.5 8.5l7 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/>';
+    } else if (d.level === 'warning') {
+      icon.innerHTML = '<path d="M12 3 2.5 20h19L12 3z" opacity="0.15"/><path d="M12 9v5M12 16.8v.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/>';
+    } else {
+      icon.innerHTML = '<circle cx="12" cy="12" r="10" opacity="0.15"/><path d="M12 10.5V17M12 7.2v.01" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/>';
+    }
+    item.appendChild(icon);
+    const text = document.createElement('div');
+    text.className = 'diag-text';
+    text.innerHTML = esc(d.message) +
+      (d.nodeName ? '<div class="meta">' + esc(d.nodeName) + (d.nodeKind ? ' · ' + esc(d.nodeKind) : '') + '</div>' : '');
+    item.appendChild(text);
+    diagList.appendChild(item);
+  }
+  if (filtered.length > 200) {
+    const more = document.createElement('div');
+    more.className = 'more-note';
+    more.textContent = 'Showing the first 200 of ' + filtered.length + ' — narrow the filter for more.';
+    diagList.appendChild(more);
+  }
+}
+
+/** True for design-system output: the `DesignSystem.kt` accessor (and the material `DesignSystem/Theme.kt`). */
+function isDesignSystemPath(path) {
+  return path === 'DesignSystem.kt' || path.startsWith('DesignSystem/');
+}
+
+function renderFileTabs() {
+  const bar = $('fileBar');
+  bar.innerHTML = '';
+  if (lastConversion.files.length === 0) {
+    const box = $('filesEmpty');
+    if (converted) {
+      box.innerHTML =
+        '<svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8.5v.01M12 11.5V16"/></svg>' +
+        'The selection produced no Kotlin files — see the diagnostics above for what to fix.';
+    }
+    box.style.display = '';
+    $('filesContent').style.display = 'none';
+    $('dsGroup').style.display = 'none';
+    return;
+  }
+  $('filesEmpty').style.display = 'none';
+  $('filesContent').style.display = '';
+  const index = activeFileIndex >= 0 && activeFileIndex < lastConversion.files.length ? activeFileIndex : 0;
+  activeFileIndex = index;
+  // Design-system files sit in their own subsection at the top of the card;
+  // screen/component files keep the classic Files group.
+  const screens = lastConversion.files.filter((f) => !isDesignSystemPath(f.path));
+  const dsFiles = lastConversion.files.filter((f) => isDesignSystemPath(f.path));
+  const makePill = (f, i, targetBar) => {
+    const wrap = document.createElement('span');
+    wrap.className = 'filepill-wrap';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'pill-check';
+    check.dataset.exportId = f.path;
+    check.checked = exportSet('files').has(f.path);
+    check.title = 'Include ' + f.path + ' in the ZIP';
+    // A tick only changes the export set — the pill itself previews the file.
+    check.onclick = (e) => e.stopPropagation();
+    check.onchange = () => {
+      if (check.checked) exportSet('files').add(f.path);
+      else exportSet('files').delete(f.path);
+      syncExportPanel();
+    };
+    const btn = document.createElement('button');
+    btn.className = 'filepill' + (i === activeFileIndex ? ' active' : '');
+    btn.textContent = f.path;
+    btn.title = 'Show ' + f.path;
+    btn.onclick = () => { activeFileIndex = i; renderFileTabs(); };
+    wrap.appendChild(check);
+    wrap.appendChild(btn);
+    targetBar.appendChild(wrap);
+  };
+  screens.forEach((f, i) => makePill(f, i, bar));
+  const dsBar = $('dsBar');
+  dsBar.innerHTML = '';
+  lastConversion.files.forEach((f, i) => {
+    if (isDesignSystemPath(f.path)) makePill(f, i, dsBar);
+  });
+  $('dsGroup').style.display = dsFiles.length > 0 ? '' : 'none';
+  const dsBadge = $('dsCount');
+  dsBadge.textContent = String(dsFiles.length);
+  dsBadge.hidden = dsFiles.length === 0;
+  dsBadge.classList.toggle('hot', dsFiles.length > 0);
+  const filesCountBadge = $('filesCount');
+  filesCountBadge.textContent = String(screens.length);
+  filesCountBadge.hidden = screens.length === 0;
+  filesCountBadge.classList.toggle('hot', screens.length > 0);
+  const file = lastConversion.files[index];
+  $('previewName').textContent = file.path;
+  $('codePreview').innerHTML = highlightKotlin(file.content);
+}
+
+function copyActiveFile() {
+  const f = lastConversion.files[activeFileIndex >= 0 ? activeFileIndex : 0];
+  if (!f) {
+    setStatus('Nothing generated yet; run a conversion first.', true);
+    return;
+  }
+  copyText(String(f.content)).then(
+    () => setStatus('Copied ' + f.path + '.'),
+    () => setStatus('Clipboard is unavailable; select the code and copy manually, or download the ZIP.', true),
+  );
+}
+
+/**
+ * Writes text to the clipboard with two strategies. Figma plugin UIs run in
+ * an iframe whose Permissions-Policy may leave `navigator.clipboard`
+ * undefined (the call would throw synchronously, breaking the promise
+ * chain), so the classic textarea + `execCommand('copy')` fallback runs when
+ * the async API is missing or rejects. Returns a promise; never throws.
+ */
+function copyText(text) {
+  return new Promise((resolve, reject) => {
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard
+          .writeText(text)
+          .then(resolve, () => (execCommandCopy(text) ? resolve() : reject(new Error('execCommand failed'))));
+        return;
+      }
+    } catch {
+      // fall through to the execCommand fallback below
+    }
+    if (execCommandCopy(text)) resolve();
+    else reject(new Error('Clipboard unavailable'));
+  });
+}
+
+/** Legacy clipboard write: hidden textarea + `document.execCommand('copy')`. */
+function execCommandCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  ta.style.top = '0';
+  document.body.appendChild(ta);
+  try {
+    // `document.activeElement` must be within the iframe for selection to copy.
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    ta.remove();
+  }
+}
+
+/* Lightweight Kotlin highlighting (escape first — never innerHTML raw). */
+function esc(text) {
+  return String(text).replace(/[&<>"]/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+const KOTLIN_KEYWORDS_SOURCE = 'fun|val|var|for|if|else|when|return|import|package|true|false|null';
+/**
+ * Lightweight Kotlin highlighting. ONE combined pass: a single regex with a
+ * replacer wraps each token exactly once, so the markup inserted for an
+ * earlier token is never re-scanned by a later rule (the old chained
+ * `.replace()` calls re-processed their own spans and broke every line that
+ * carried a `//` comment — the string rule then wrapped the span's own
+ * `class="tok-cmt"` quotes, corrupting the preview HTML).
+ * Alternation order = priority; the leftmost match wins, so a `//` inside a
+ * string literal is consumed by the string and a quote inside a comment
+ * stays comment text.
+ */
+function highlightKotlin(code) {
+  // Element-text escaping: inside codePreview's HTML only `&` and `<` are
+  // structural, so `"` stays literal — the string rule needs the real quote
+  // to match (the old esc() turned every `"` into `&quot;` first, which made
+  // the string rule dead and left `//` inside URLs comment-highlighted).
+  const escaped = String(code).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  return escaped.replace(
+    new RegExp(
+      `(\\/\\/[^\\n]*)` + // line comment
+      `|("(?:[^"\\\\\\n]|\\\\.)*")` + // string literal
+      `|(@\\w+)` + // annotation
+      `|\\b(${KOTLIN_KEYWORDS_SOURCE})\\b` + // keyword
+      `|\\b(0x[0-9A-Fa-f]+|\\d+\\.?\\d*)(f|\\.dp|\\.sp)?\\b`, // number (+ unit)
+      'g',
+    ),
+    (_match, cmt, str, ann, kw, num, unit) => {
+      if (cmt) return `<span class="tok-cmt">${cmt}</span>`;
+      if (str) return `<span class="tok-str">${str}</span>`;
+      if (ann) return `<span class="tok-ann">${ann}</span>`;
+      if (kw) return `<span class="tok-kw">${kw}</span>`;
+      if (num) return `<span class="tok-num">${num}${unit ? `<span class="tok-kw">${unit}</span>` : ''}</span>`;
+      return _match;
+    },
+  );
+}
+
+/* =========================================================================
+ * Assets & ignore (curation)
+ * ========================================================================= */
+function markRow(mark, removeType) {
+  const row = document.createElement('div');
+  row.className = 'markrow';
+  row.appendChild(kindChip(mark.fType || 'NODE'));
+  const name = document.createElement('span');
+  name.className = 'mark-name';
+  name.textContent = mark.name;
+  row.appendChild(name);
+  if (mark.masterId) {
+    const sub = document.createElement('span');
+    sub.className = 'mark-sub';
+    sub.textContent = 'by component identity';
+    sub.title = 'Matches every instance of this component by its master id — renames do not break it.';
+    row.appendChild(sub);
+  }
+  const del = document.createElement('button');
+  del.className = 'del';
+  del.textContent = '✕';
+  del.type = 'button';
+  del.title = 'Remove this mark';
+  del.onclick = () => {
+    parent.postMessage({ pluginMessage: { type: removeType, payload: { id: mark.id } } }, '*');
+  };
+  row.appendChild(del);
+  return row;
+}
+
+function renderMarkList(hostId, countId, marks, removeType, emptyText) {
+  const host = $(hostId);
+  const count = $(countId);
+  count.textContent = String(marks.length);
+  count.classList.toggle('hot', marks.length > 0);
+  host.innerHTML = '';
+  if (marks.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.style.padding = '10px';
+    empty.textContent = emptyText;
+    host.appendChild(empty);
+    return;
+  }
+  for (const mark of marks) host.appendChild(markRow(mark, removeType));
+}
+
+function renderAssetSources() {
+  const pages = assetSources.pages || [];
+  const select = $('assetPageSelect');
+  const previous = select.value;
+  select.innerHTML = '';
+  for (const page of pages) {
+    const option = document.createElement('option');
+    option.value = page.id;
+    option.textContent = page.name + (page.current ? '  (current)' : '');
+    select.appendChild(option);
+  }
+  if (previous && pages.some((p) => p.id === previous)) select.value = previous;
+
+  renderMarkList('ignoreMarksList', 'ignoreMarksCount', assetSources.ignoreMarks || [], 'unmark-ignored', 'No ignored layers yet. Select one on the canvas, then use "Ignore selected".');
+  renderMarkList('assetSkipList', 'assetSkipCount', assetSources.assetSkipMarks || [], 'unmark-asset-skip', 'Nothing on this list. Use "Keep layout, skip asset" to stop exporting a node as an asset.');
+
+  const library = assetSources.library || [];
+  const libraryCount = $('libraryCount');
+  libraryCount.textContent = String(library.length);
+  libraryCount.hidden = library.length === 0;
+  libraryCount.classList.toggle('hot', library.length > 0);
+  const libraryList = $('libraryList');
+  libraryList.innerHTML = '';
+  for (const entry of library) {
+    const row = document.createElement('div');
+    row.className = 'markrow';
+    const tag = kindChip(entry.kind === 'png' ? 'PNG' : 'SVG');
+    row.appendChild(tag);
+    const name = document.createElement('span');
+    name.className = 'mark-name';
+    name.textContent = entry.nodeName;
+    row.appendChild(name);
+    const drawable = document.createElement('span');
+    drawable.className = 'drawable-code';
+    drawable.title = 'Resource name used in generated code';
+    drawable.textContent = 'R.drawable.' + entry.key;
+    row.appendChild(drawable);
+
+    // Per-entry export-format override ('auto' = follow the global setting).
+    // Raster sources only offer raster formats; vectors can be an SVG file,
+    // Kotlin ImageVector code, or rasterized.
+    const fmt = document.createElement('select');
+    fmt.className = 'fmt-select';
+    fmt.title = 'Export format for this asset (entry override)';
+    const options = entry.kind === 'png'
+      ? [['auto', 'Format: auto'], ['png', 'PNG'], ['jpg', 'JPG']]
+      : [['auto', 'Format: auto'], ['svg', 'SVG'], ['imagevector', 'ImageVector'], ['png', 'PNG'], ['jpg', 'JPG']];
+    for (const [value, label] of options) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      fmt.appendChild(option);
+    }
+    fmt.value = entry.fmt || 'auto';
+    fmt.onchange = () => {
+      parent.postMessage({ pluginMessage: { type: 'set-library-fmt', payload: { key: entry.key, fmt: fmt.value } } }, '*');
+    };
+    row.appendChild(fmt);
+
+    const del = document.createElement('button');
+    del.className = 'del';
+    del.textContent = '✕';
+    del.type = 'button';
+    del.title = 'Remove this library asset';
+    del.onclick = () => {
+      parent.postMessage({ pluginMessage: { type: 'remove-library-entry', payload: { key: entry.key } } }, '*');
+    };
+    row.appendChild(del);
+    libraryList.appendChild(row);
+  }
+  $('libraryHint').innerHTML = library.length
+    ? 'Matching screen layers (same name + size, or instances of the same component) render as <code>Image</code> with the canonical asset — harvesting again refreshes these entries.'
+    : 'Empty. Harvest a dedicated icons or images page (top-level layers) so its assets apply to every future screen.';
+}
+
+/* =========================================================================
+ * ZIP export (store method, deterministic, dependency-free)
+ * ========================================================================= */
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function base64ToBytes(b64) {
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+/**
+ * Build a ZIP (method 0, store) from entries: [{ name, data: Uint8Array }].
+ * Timestamps are zeroed so identical inputs produce identical archives.
+ */
+function makeZip(entries) {
+  const enc = new TextEncoder();
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const e of entries) {
+    const nameBytes = enc.encode(e.name);
+    const crc = crc32(e.data);
+    const local = new Uint8Array(30 + nameBytes.length);
+    const dv = new DataView(local.buffer);
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(4, 20, true);        // version needed
+    dv.setUint16(6, 0x0800, true);    // flags: UTF-8 names
+    dv.setUint16(8, 0, true);         // method: store
+    dv.setUint16(10, 0, true);        // time (00:00)
+    dv.setUint16(12, 0x21, true);     // date (1980-01-01, deterministic)
+    dv.setUint32(14, crc, true);
+    dv.setUint32(18, e.data.length, true);
+    dv.setUint32(22, e.data.length, true);
+    dv.setUint16(26, nameBytes.length, true);
+    dv.setUint16(28, 0, true);
+    local.set(nameBytes, 30);
+    locals.push(local, e.data);
+    const central = new Uint8Array(46 + nameBytes.length);
+    const cdv = new DataView(central.buffer);
+    cdv.setUint32(0, 0x02014b50, true);
+    cdv.setUint16(4, 20, true);       // version made by
+    cdv.setUint16(6, 20, true);       // version needed
+    cdv.setUint16(8, 0x0800, true);
+    cdv.setUint16(10, 0, true);
+    cdv.setUint16(12, 0, true);
+    cdv.setUint16(14, 0x21, true);
+    cdv.setUint32(16, crc, true);
+    cdv.setUint32(20, e.data.length, true);
+    cdv.setUint32(24, e.data.length, true);
+    cdv.setUint16(28, nameBytes.length, true);
+    cdv.setUint16(30, 0, true);       // extra len
+    cdv.setUint16(32, 0, true);       // comment len
+    cdv.setUint16(34, 0, true);       // disk
+    cdv.setUint16(36, 0, true);       // internal attrs
+    cdv.setUint32(38, 0, true);       // external attrs
+    cdv.setUint32(42, offset, true);
+    central.set(nameBytes, 46);
+    centrals.push(central);
+    offset += local.length + e.data.length;
+  }
+  const centralSize = centrals.reduce((s, c) => s + c.length, 0);
+  const eocd = new Uint8Array(22);
+  const edv = new DataView(eocd.buffer);
+  edv.setUint32(0, 0x06054b50, true);
+  edv.setUint16(8, entries.length, true);
+  edv.setUint16(10, entries.length, true);
+  edv.setUint32(12, centralSize, true);
+  edv.setUint32(16, offset, true);
+  const totalLen = offset + centralSize + 22;
+  const out = new Uint8Array(totalLen);
+  let pos = 0;
+  for (const chunk of [...locals, ...centrals, eocd]) {
+    out.set(chunk, pos);
+    pos += chunk.length;
+  }
+  return out;
+}
+
+/* =========================================================================
+ * Export panel (Output tab): per-file/per-asset selection, then download
+ * ========================================================================= */
+/** Selection model: null = every item of that group, Set = explicitly chosen ids. */
+let exportSelection = { files: null, assets: null };
+
+/** Exportable Kotlin files of the last conversion. */
+function exportFileEntries() {
+  return lastConversion.files.map((f) => ({ id: f.path, name: f.path, chip: 'Kotlin' }));
+}
+
+/** Exportable assets; ImageVector-format entries are pinned (they compile into Icons.kt). */
+function exportAssetEntries() {
+  const rasters = lastConversion.imageAssets.map((a) => ({ id: 'img:' + a.assetName, name: a.assetName + '.' + (a.ext || 'png'), chip: (a.ext || 'png').toUpperCase() }));
+  const vectors = lastConversion.vectorAssets.map((a) => ({ id: 'vec:' + a.assetName, name: a.assetName, chip: a.fmt === 'imagevector' ? 'ImageVector' : 'SVG', pinned: a.fmt === 'imagevector' }));
+  return [...rasters, ...vectors];
+}
+
+/** Assets the user can toggle directly (pinned ones ride via Icons.kt). */
+function selectableAssets(entries) {
+  return entries.filter((e) => !e.pinned);
+}
+
+/** Materialize the selection set of a group (null lazily becomes "all ids"). */
+function exportSet(group) {
+  if (exportSelection[group] === null) {
+    exportSelection[group] = group === 'files'
+      ? new Set(exportFileEntries().map((e) => e.id))
+      : new Set(selectableAssets(exportAssetEntries()).map((e) => e.id));
+  }
+  return exportSelection[group];
+}
+
+function syncExportPanel() {
+  const hasResults = converted && (lastConversion.files.length + lastConversion.imageAssets.length + lastConversion.vectorAssets.length) > 0;
+  $('exportBody').style.display = hasResults ? '' : 'none';
+  if (!hasResults) return;
+
+  const files = exportFileEntries();
+  const assets = exportAssetEntries();
+  const selectable = selectableAssets(assets);
+  // The per-preview checkboxes are rendered by renderFileTabs/renderAssetsSection;
+  // re-sync their state so masters and presets stay bidirectional.
+  for (const el of document.querySelectorAll('#fileBar .pill-check, #dsBar .pill-check')) {
+    el.checked = exportSet('files').has(el.dataset.exportId);
+  }
+  for (const el of document.querySelectorAll('#assetsGrid .tile-check')) {
+    if (!el.disabled) el.checked = exportSet('assets').has(el.dataset.exportId);
+  }
+
+  const filesSel = files.filter((e) => exportSet('files').has(e.id)).length;
+  const assetsSel = selectable.filter((e) => exportSet('assets').has(e.id)).length;
+  $('exportFilesCount').textContent = filesSel + '/' + files.length + ' selected';
+  $('exportAssetsCount').textContent = assetsSel + '/' + selectable.length + ' selected';
+
+  const filesMaster = $('exportAllFiles');
+  filesMaster.checked = files.length > 0 && filesSel === files.length;
+  filesMaster.indeterminate = filesSel > 0 && filesSel < files.length;
+  const assetsMaster = $('exportAllAssets');
+  assetsMaster.checked = selectable.length > 0 && assetsSel === selectable.length;
+  assetsMaster.indeterminate = assetsSel > 0 && assetsSel < selectable.length;
+
+  const total = filesSel + assetsSel;
+  const btn = $('exportZipBtn');
+  btn.disabled = total === 0;
+  $('exportZipLabel').textContent = total === 0 ? 'Download ZIP' : 'Download ZIP (' + filesSel + ' file' + (filesSel === 1 ? '' : 's') + ', ' + assetsSel + ' asset' + (assetsSel === 1 ? '' : 's') + ')';
+  const badge = $('exportCount');
+  const grandTotal = files.length + selectable.length;
+  badge.textContent = total + '/' + grandTotal;
+  badge.hidden = total === grandTotal;
+  badge.classList.toggle('hot', grandTotal > 0);
+  $('exportHint').textContent = total === 0
+    ? 'Select at least one file or asset to download.'
+    : filesSel === files.length && assetsSel === selectable.length
+      ? 'Full export — every generated file and every selectable asset, plus the conversion report.'
+      : 'Partial export — the included conversion-report.json lists exactly this ZIP and flags it true in partialExport.';
+}
+
+function resetExportSelection() {
+  exportSelection = { files: null, assets: null };
+  syncExportPanel();
+}
+
+function wireExportPanel() {
+  $('exportAllFiles').onclick = () => {
+    exportSelection.files = $('exportAllFiles').checked ? null : new Set();
+    syncExportPanel();
+  };
+  $('exportAllAssets').onclick = () => {
+    exportSelection.assets = $('exportAllAssets').checked ? null : new Set();
+    syncExportPanel();
+  };
+  $('exportPresetAll').onclick = () => {
+    exportSelection = { files: null, assets: null };
+    syncExportPanel();
+  };
+  $('exportPresetFiles').onclick = () => {
+    exportSelection = { files: null, assets: new Set() };
+    syncExportPanel();
+  };
+  $('exportPresetAssets').onclick = () => {
+    exportSelection = { files: new Set(), assets: null };
+    syncExportPanel();
+  };
+  $('exportPresetNone').onclick = () => {
+    exportSelection = { files: new Set(), assets: new Set() };
+    syncExportPanel();
+  };
+}
+wireExportPanel();
+
+function downloadZip() {
+  const files = exportSelection.files === null
+    ? lastConversion.files
+    : lastConversion.files.filter((f) => exportSelection.files.has(f.path));
+  const assets = exportAssetEntries();
+  const assetSel = exportSelection.assets === null
+    ? new Set(selectableAssets(assets).map((e) => e.id))
+    : exportSelection.assets;
+  const selRaster = lastConversion.imageAssets.filter((a) => assetSel.has('img:' + a.assetName));
+  const selVector = lastConversion.vectorAssets.filter((a) => assetSel.has('vec:' + a.assetName));
+  if (files.length + selRaster.length + selVector.length === 0) return false;
+  const appName = settings.appName || 'ComposeStudio';
+  const pkg = settings.packageName || 'com.example.app';
+  const javaDir = 'app/src/main/java/' + pkg.replace(/[^\w.]/g, '').split('.').join('/') + '/';
+  const entries = [];
+  for (const f of files) entries.push({ name: appName + '/' + javaDir + f.path, data: new TextEncoder().encode(f.content) });
+  // Rasters land in drawable-nodpi with their real extension (the sandbox
+  // sniffs the actual bytes — a JPEG photo stays .jpg even when the fill
+  // asked for PNG); SVG-file vectors land in vectors/.
+  for (const img of selRaster) {
+    entries.push({ name: appName + '/app/src/main/res/drawable-nodpi/' + img.assetName + '.' + (img.ext || 'png'), data: base64ToBytes(img.bytesBase64) });
+  }
+  for (const svg of selVector) {
+    if (svg.fmt === 'imagevector') continue; // compiled into Icons.kt, not a file
+    entries.push({ name: appName + '/vectors/' + svg.assetName + '.svg', data: new TextEncoder().encode(svg.content) });
+  }
+  // The report is the manifest of this exact ZIP; a subset export is flagged.
+  const selectable = selectableAssets(assets);
+  const partial = files.length !== lastConversion.files.length || selectable.some((e) => !assetSel.has(e.id));
+  entries.push({
+    name: appName + '/conversion-report.json',
+    data: new TextEncoder().encode(JSON.stringify({
+      generatedBy: 'Compose Studio',
+      mode: $('mode').value,
+      assetExport: {
+        exportAssets: settings.exportAssets !== false,
+        vectorFormat: settings.vectorFormat || 'svg',
+        imageFormat: settings.imageFormat || 'auto',
+        // Per-entry overrides actually applied to these assets.
+        overrides: (assetSources.library || []).filter((entry) => entry.fmt && entry.fmt !== 'auto').map((entry) => ({ key: entry.key, fmt: entry.fmt })),
+      },
+      designSystem: {
+        source: settings.dsSource || 'off',
+        structure: settings.dsStructure || 'object',
+        usage: !!settings.dsUsage,
+        usageMin: clampUsageMin(settings.dsUsageMin),
+      },
+      diagnostics: lastConversion.diagnostics,
+      partialExport: partial,
+      files: files.map((f) => f.path),
+      imageAssets: selRaster.map((a) => ({ assetName: a.assetName, ext: a.ext || 'png' })),
+      vectorAssets: selVector.map((a) => ({ assetName: a.assetName, fmt: a.fmt })),
+    }, null, 2)),
+  });
+
+  const bytes = makeZip(entries);
+  const blob = new Blob([bytes], { type: 'application/zip' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = appName.replace(/[^\w-]+/g, '_') + '.zip';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return true;
+}
+
+/* =========================================================================
+ * Mapping profile JSON import/export
+ * ========================================================================= */
+function exportProfileJson() {
+  const profile = {
+    schemaVersion: 1,
+    profileName: settings.appName + ' profile',
+    colors: [
+      ...Object.entries(settings.colorMap).map(([name, target]) => ({ source: { kind: 'hex', name }, target })),
+      ...Object.entries(settings.colorMapNames).map(([name, target]) => ({ source: { kind: 'variable', name }, target })),
+    ],
+    fonts: Object.entries(settings.fontFamilyMap).map(([name, target]) => ({ source: { kind: 'family', name }, target })),
+    textStyles: Object.entries(settings.textStyleMap).map(([name, target]) => ({ source: { kind: 'fontFamily', name }, target })),
+    components: Object.entries(settings.componentMap).map(([componentName, symbol]) => ({
+      source: { kind: 'component', componentName },
+      target: { symbol },
+      arguments: [],
+    })),
+  };
+  const blob = new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'mapping-profile.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function importProfileJson(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const profile = JSON.parse(String(reader.result));
+      if (profile.schemaVersion !== 1) throw new Error('schemaVersion must be 1');
+      settings.colorMap = {};
+      settings.colorMapNames = {};
+      for (const c of profile.colors || []) {
+        if (typeof c.target !== 'string' || !c.target) continue;
+        if (c.source && c.source.kind === 'hex' && typeof c.source.name === 'string') settings.colorMap[c.source.name] = c.target;
+        else if (c.source && c.source.kind === 'variable' && typeof c.source.name === 'string') settings.colorMapNames[c.source.name] = c.target;
+      }
+      settings.fontFamilyMap = {};
+      for (const f of profile.fonts || []) {
+        if (f.source && f.source.name && typeof f.target === 'string') settings.fontFamilyMap[f.source.name] = f.target;
+      }
+      settings.textStyleMap = {};
+      for (const t of profile.textStyles || []) {
+        if (t.source && t.source.name && typeof t.target === 'string') settings.textStyleMap[t.source.name] = t.target;
+      }
+      settings.componentMap = {};
+      for (const c of profile.components || []) {
+        const name = c.source && c.source.componentName ? c.source.componentName : c.source && c.source.variableId;
+        if (name && c.target && typeof c.target.symbol === 'string') settings.componentMap[name] = c.target.symbol;
+      }
+      applySettings(settings);
+      queueSettingsSync();
+      setStatus('Mapping profile imported.', false);
+    } catch (e) {
+      setStatus('Profile import failed: ' + (e && e.message ? e.message : String(e)), true);
+    }
+  };
+  reader.readAsText(file);
+}
+
+/* =========================================================================
+ * Wiring: settings inputs
+ * ========================================================================= */
+$('appName').onchange = () => { settings.appName = $('appName').value.trim() || 'ComposeApp'; queueSettingsSync(); };
+$('packageName').onchange = () => { settings.packageName = $('packageName').value.trim() || 'com.example.composeapp'; queueSettingsSync(); };
+$('iconAssetPrefix').onchange = () => { settings.iconAssetPrefix = $('iconAssetPrefix').value.trim(); queueSettingsSync(); };
+$('imageAssetPrefix').onchange = () => { settings.imageAssetPrefix = $('imageAssetPrefix').value.trim(); queueSettingsSync(); };
+$('ignorePrefix').onchange = () => { settings.ignorePrefix = $('ignorePrefix').value.trim(); queueSettingsSync(); };
+
+/* Segmented: conversion mode (hidden input keeps the payload contract). */
+$('modeSegment').querySelectorAll('.seg-btn').forEach((button) => {
+  button.onclick = () => {
+    const value = button.getAttribute('data-value');
+    $('mode').value = value;
+    for (const b of $('modeSegment').querySelectorAll('.seg-btn')) {
+      b.classList.toggle('active', b === button);
+    }
+    $('modeHint').style.display = value === 'standalone' ? '' : 'none';
+    $('modeHintDesign').style.display = value === 'existing-design-system' ? '' : 'none';
+  };
+});
+
+/* Segmented: variant parameter style. */
+$('variantSegment').querySelectorAll('.seg-btn').forEach((button) => {
+  button.onclick = () => {
+    settings.variantParamStyle = button.getAttribute('data-value');
+    $('variantParamStyle').value = settings.variantParamStyle;
+    syncVariantSegment();
+    queueSettingsSync();
+  };
+});
+
+/* Segmented: variant code shape. */
+$('variantShapeSegment').querySelectorAll('.seg-btn').forEach((button) => {
+  button.onclick = () => {
+    settings.variantShape = button.getAttribute('data-value');
+    $('variantShape').value = settings.variantShape;
+    syncVariantShapeSegment();
+    queueSettingsSync();
+  };
+});
+
+/* =========================================================================
+ * Wiring: Config tab (component configurations + presets)
+ * ========================================================================= */
+wireComponentPresets();
+wirePresetSaveForm();
+
+/* =========================================================================
+ * Wiring: actions
+ * ========================================================================= */
+$('convertBtn').onclick = () => {
+  setStatus('Converting…');
+  const mode = $('mode').value;
+  parent.postMessage({ pluginMessage: { type: 'convert-selection', payload: { mode } } }, '*');
+};
+
+$('exportZipBtn').onclick = () => {
+  if (!downloadZip()) {
+    setStatus('Nothing selected for export — pick at least one file or asset in the Output tab.', true);
+    return;
+  }
+  setStatus('ZIP downloaded — check your browser downloads.', false);
+};
+$('goOutputBtn').onclick = () => { switchTab('output'); };
+$('copyFileBtn').onclick = () => { copyActiveFile(); };
+$('exportProfileBtn').onclick = () => { exportProfileJson(); };
+$('importProfileBtn').onclick = () => { $('importProfileInput').click(); };
+$('importProfileInput').onchange = (e) => {
+  if (e.target.files && e.target.files[0]) importProfileJson(e.target.files[0]);
+  e.target.value = '';
+};
+$('closeBtn').onclick = () => { parent.postMessage({ pluginMessage: { type: 'close-plugin' } }, '*'); };
+$('refreshBtn').onclick = () => {
+  setStatus('Checking selection…');
+  parent.postMessage({ pluginMessage: { type: 'inspect-selection' } }, '*');
+};
+
+$('ignoreSelBtn').onclick = () => { parent.postMessage({ pluginMessage: { type: 'mark-ignored' } }, '*'); };
+$('skipAssetBtn').onclick = () => { parent.postMessage({ pluginMessage: { type: 'mark-asset-skip' } }, '*'); };
+$('harvestBtn').onclick = () => {
+  const sel = $('assetPageSelect');
+  const pageId = sel && sel.value ? sel.value : null;
+  setStatus('Harvesting assets…');
+  parent.postMessage({ pluginMessage: { type: 'harvest-page', payload: { pageId } } }, '*');
+};
+$('clearLibraryBtn').onclick = () => { parent.postMessage({ pluginMessage: { type: 'clear-library' } }, '*'); };
+
+/* Initial paint */
+renderSelection({ selectedNodes: [] });
+</script>
+</body>
+</html>

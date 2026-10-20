@@ -1,0 +1,236 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Compose Studio cover</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; }
+  body {
+    width: 1920px; height: 1080px;
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    color: #e8e4f2;
+    background:
+      radial-gradient(1150px 780px at 82% 30%, rgba(127, 82, 255, 0.30), transparent 62%),
+      radial-gradient(900px 700px at 12% 88%, rgba(24, 160, 251, 0.16), transparent 60%),
+      linear-gradient(160deg, #17142b 0%, #140f24 55%, #100d1e 100%);
+    position: relative;
+  }
+  .grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.045) 1px, transparent 1px);
+    background-size: 72px 72px;
+    -webkit-mask-image: radial-gradient(1400px 900px at 60% 40%, #000 35%, transparent 78%);
+  }
+  .content { position: relative; display: flex; height: 100%; }
+
+  .left {
+    padding: 96px 0 88px 110px;
+    width: 880px; flex: none;
+    display: flex; flex-direction: column;
+  }
+  .logo { display: flex; align-items: center; gap: 22px; }
+  .logo .mark {
+    width: 88px; height: 88px; border-radius: 24px; flex: none;
+    background: linear-gradient(135deg, #6a3de8 0%, #7f52ff 52%, #18a0fb 135%);
+    box-shadow: 0 10px 34px rgba(127, 82, 255, 0.45);
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+  }
+  .logo .mark::before {
+    content: ''; position: absolute; left: 0; right: 0; top: 0; height: 50%;
+    border-radius: 24px 24px 40% 40%;
+    background: linear-gradient(180deg, rgba(255,255,255,0.25), rgba(255,255,255,0));
+  }
+  .logo .mark svg { width: 50px; height: 50px; }
+  .logo .name { font-size: 30px; font-weight: 600; letter-spacing: 0.01em; color: #cbc6de; }
+  .logo .name span { color: #ffffff; }
+
+  h1 {
+    margin-top: 62px;
+    font-size: 74px; line-height: 1.06; font-weight: 700; letter-spacing: -0.02em;
+    color: #ffffff; white-space: nowrap;
+  }
+  h1 .grad {
+    background: linear-gradient(100deg, #a05cff 0%, #7f52ff 42%, #18a0fb 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .tagline {
+    margin-top: 20px;
+    font-size: 27px; line-height: 1.4; color: #b9b2cf; max-width: 700px;
+  }
+  .tagline b { color: #ffffff; font-weight: 600; }
+
+  .points { margin-top: 42px; display: flex; flex-direction: column; gap: 22px; max-width: 680px; }
+  .point { display: flex; gap: 16px; align-items: flex-start; }
+  .point .dot {
+    width: 32px; height: 32px; border-radius: 10px; margin-top: 2px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(127, 82, 255, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(127, 82, 255, 0.35);
+  }
+  .point .dot svg { width: 17px; height: 17px; }
+  .point p { font-size: 23px; line-height: 1.4; color: #cfc9e2; }
+  .point p b { color: #ffffff; font-weight: 600; }
+
+  .badges { margin-top: 40px; display: flex; gap: 16px; }
+  .badge {
+    font-size: 19px; font-weight: 600; letter-spacing: 0.01em;
+    padding: 11px 20px; border-radius: 999px; color: #e6e1f5;
+    background: rgba(255,255,255,0.06);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14);
+    display: inline-flex; align-items: center; gap: 10px;
+  }
+  .badge .b-dot { width: 9px; height: 9px; border-radius: 50%; }
+
+  .right { flex: 1; position: relative; }
+  .frame {
+    position: absolute; top: 100px; right: 150px;
+    width: 660px; height: 840px;
+    background: #ffffff;
+    border-radius: 22px;
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.10),
+      0 40px 120px rgba(0, 0, 0, 0.55),
+      0 0 90px rgba(127, 82, 255, 0.28);
+    overflow: hidden;
+  }
+  .frame .bar {
+    height: 52px; background: #1d1a2e;
+    display: flex; align-items: center; gap: 9px; padding: 0 20px;
+  }
+  .frame .bar i { width: 13px; height: 13px; border-radius: 50%; display: block; }
+  .frame iframe { width: 660px; height: 788px; border: 0; display: block; background: #ffffff; }
+
+  .code {
+    position: absolute; right: 150px; bottom: 40px; z-index: 3;
+    width: 520px; border-radius: 16px; overflow: hidden;
+    background: rgba(21, 17, 36, 0.94);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12), 0 24px 60px rgba(0,0,0,0.5);
+    backdrop-filter: blur(4px);
+  }
+  .code .head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.08);
+    font: 600 15px/1.4 'Segoe UI', system-ui, sans-serif; color: #9a93b5;
+  }
+  .code .head .k { color: #c4b1ff; font-weight: 600; }
+  .code pre {
+    margin: 0; padding: 16px 18px 18px;
+    font: 15px/1.62 SFMono-Regular, Consolas, monospace; color: #d9d3ee;
+  }
+  .code .kw { color: #c792ea; } .code .fn { color: #82aaff; }
+  .code .str { color: #c3e88d; } .code .num { color: #f78c6c; }
+  .code .cmt { color: #6f6890; font-style: italic; }
+</style>
+</head>
+<body tabindex="0" aria-label="Cover canvas">
+  <div class="grid"></div>
+  <div class="content">
+    <div class="left">
+      <div class="logo">
+        <div class="mark">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <rect x="3" y="3" width="13" height="13" rx="3.2" fill="#ffffff" fill-opacity="0.42"/>
+            <rect x="8" y="8" width="13" height="13" rx="3.2" fill="#ffffff"/>
+          </svg>
+        </div>
+        <div class="name">Compose&nbsp;<span>Studio</span></div>
+      </div>
+
+      <h1>Figma frames,<br /><span class="grad">real Compose code.</span></h1>
+      <p class="tagline">Convert any selection into <b>idiomatic Jetpack Compose</b> — Kotlin files, icon &amp; image assets, a ready-to-merge Android project layout.</p>
+
+      <div class="points">
+        <div class="point">
+          <div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="#c4b1ff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>
+          <p><b>Runs 100% locally</b> — no AI, no network access, no telemetry. Your design never leaves your machine.</p>
+        </div>
+        <div class="point">
+          <div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="#8fdfff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5"/></svg></div>
+          <p><b>Honest by construction</b> — every approximation and skip is reported in a live diagnostics list.</p>
+        </div>
+        <div class="point">
+          <div class="dot"><svg viewBox="0 0 24 24" fill="none" stroke="#7ee2a8" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7.2v9.6L12 21l8-4.2V7.2L12 3z"/><path d="M4 7.2 12 11.4l8-4.2M12 11.4V21"/></svg></div>
+          <p><b>Teach it your design system</b> — map colors, fonts and components; curated assets apply to every future conversion.</p>
+        </div>
+      </div>
+
+      <div class="badges">
+        <span class="badge"><i class="b-dot" style="background:#7ee2a8"></i>No network access</span>
+        <span class="badge"><i class="b-dot" style="background:#8fdfff"></i>Deterministic output</span>
+        <span class="badge"><i class="b-dot" style="background:#c4b1ff"></i>MIT</span>
+      </div>
+    </div>
+
+    <div class="right">
+      <div class="frame">
+        <div class="bar">
+          <i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i>
+        </div>
+        <iframe id="panel" src="/dist/ui.html"></iframe>
+      </div>
+
+      <div class="code">
+        <div class="head"><span class="k">LoginScreen.kt</span><span>· generated</span></div>
+        <pre><span class="kw">@Composable</span>
+<span class="kw">fun</span> <span class="fn">LoginScreen</span>(modifier: <span class="fn">Modifier</span> = <span class="fn">Modifier</span>) {
+    <span class="cmt">// literal colors · inline styles</span>
+    <span class="fn">Column</span>(verticalArrangement = <span class="fn">spacedBy</span>(<span class="num">16</span>.dp)) {
+        <span class="fn">Text</span>(<span class="str">"Welcome"</span>, color = <span class="fn">Color</span>(<span class="num">0xFF000000</span>))
+    }
+}</pre>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const send = (type, payload) =>
+    document.getElementById('panel').contentWindow.postMessage(
+      { pluginMessage: payload ? { type, payload } : { type } }, '*');
+
+  document.getElementById('panel').addEventListener('load', () => {
+    send('settings', {
+      appName: 'ComposeApp',
+      packageName: 'com.example.composeapp',
+      iconAssetPrefix: 'icon_',
+      imageAssetPrefix: 'img_',
+      ignorePrefix: '_ignore',
+      variantParamStyle: 'enum',
+      fontFamilyMap: { Roboto: 'FontFamily.MyBrand' },
+      colorMap: { '#FFFFFF': 'MaterialTheme.colorScheme.surface' },
+      colorMapNames: { 'brand/primary': 'BrandColors.primary' },
+      textStyleMap: {},
+      componentMap: { Button: 'MyButton' },
+    });
+    send('inspection', {
+      selectedNodes: [
+        { id: '1', name: 'Login Screen', kind: 'FRAME', convertable: true },
+        { id: '2', name: '_ignore/status bar', kind: 'GROUP', convertable: true },
+        { id: '3', name: 'Hero Image', kind: 'RECTANGLE', convertable: true },
+      ],
+    });
+    setTimeout(() => {
+      send('conversion', {
+        diagnostics: [
+          { level: 'warning', message: 'Line height approximated; percent spacing supported only as ratio.', nodeName: 'Welcome', nodeKind: 'TEXT' },
+          { level: 'info', message: 'Rotated node flattened; rotation is not representable here.', nodeName: 'Badge', nodeKind: 'TEXT' },
+        ],
+        files: [
+          { path: 'LoginScreen.kt', content: 'package com.example.composeapp\n\nimport androidx.compose.foundation.background\nimport androidx.compose.foundation.layout.Column\nimport androidx.compose.material3.Text\nimport androidx.compose.runtime.Composable\nimport androidx.compose.ui.Modifier\nimport androidx.compose.ui.graphics.Color\n\n@Composable\nfun LoginScreen(modifier: Modifier = Modifier) {\n    // literal colors · inline styles\n    Column { Text("Welcome", color = Color(0xFF000000)) }\n}\n' },
+          { path: 'Button.kt', content: 'package com.example.composeapp\n\nenum class ButtonSize { MD, XL }\n' },
+        ],
+        imageAssets: [{ assetName: 'img_banner' }],
+        vectorAssets: [{ assetName: 'ic_star' }],
+      });
+      // show the input on the panel (Output content is the floating card's job)
+      setTimeout(() => {
+        document.getElementById('panel').contentDocument.querySelector('[data-tab="convert"]').click();
+      }, 350);
+    }, 220);
+  });
+</script>
+</body>
+</html>

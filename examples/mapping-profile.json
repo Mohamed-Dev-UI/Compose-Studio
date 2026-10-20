@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "profileName": "Example design system",
+  "colors": [
+    {
+      "source": { "kind": "variable", "name": "Brand/Primary" },
+      "target": "MaterialTheme.colorScheme.primary"
+    },
+    {
+      "source": { "kind": "variable", "name": "Brand/OnPrimary" },
+      "target": "MaterialTheme.colorScheme.onPrimary"
+    },
+    {
+      "source": { "kind": "hex", "name": "#4F46E5" },
+      "target": "Indigo500"
+    },
+    {
+      "source": { "kind": "hex", "name": "#F9FAFB" },
+      "target": "MaterialTheme.colorScheme.surfaceVariant"
+    }
+  ],
+  "fonts": [
+    {
+      "source": { "kind": "family", "name": "Roboto" },
+      "target": "AppFontFamily"
+    },
+    {
+      "source": { "kind": "family", "name": "Inter" },
+      "target": "AppFontFamily"
+    }
+  ],
+  "textStyles": [
+    {
+      "source": { "kind": "fontFamily", "name": "Inter", "fontSize": 12 },
+      "target": "MaterialTheme.typography.labelMedium"
+    },
+    {
+      "source": { "kind": "fontFamily", "name": "Inter", "fontSize": 14 },
+      "target": "MaterialTheme.typography.bodyMedium"
+    },
+    {
+      "source": { "kind": "fontFamily", "name": "Inter" },
+      "target": "MaterialTheme.typography.bodyMedium"
+    },
+    {
+      "source": { "kind": "fontFamily", "name": "Roboto", "fontSize": 24 },
+      "target": "MaterialTheme.typography.headlineMedium"
+    }
+  ],
+  "components": [
+    {
+      "source": { "kind": "component", "componentName": "Button" },
+      "target": { "symbol": "AppButton" },
+      "arguments": [
+        { "argument": "label", "source": { "kind": "text", "childIndex": 0 } },
+        {
+          "argument": "type",
+          "source": {
+            "kind": "variantProp",
+            "name": "Type",
+            "cases": {
+              "Primary": "ButtonType.Primary",
+              "Secondary": "ButtonType.Secondary",
+              "Tertiary": "ButtonType.Tertiary"
+            }
+          }
+        },
+        { "argument": "leadingIcon", "source": { "kind": "icon", "childIndex": 0 }, "defaultValue": null, "omitIfAbsent": true },
+        { "argument": "isLoading", "source": { "kind": "constant", "value": "false" } },
+        { "argument": "modifier", "source": { "kind": "modifier" } },
+        { "argument": "content", "source": { "kind": "content" } }
+      ]
+    },
+    {
+      "source": { "kind": "component", "componentName": "Card" },
+      "target": { "symbol": "AppCard" },
+      "arguments": [
+        { "argument": "modifier", "source": { "kind": "modifier" } },
+        { "argument": "content", "source": { "kind": "content" } }
+      ]
+    },
+    {
+      "source": { "kind": "nodeType", "nodeType": "text" },
+      "target": { "symbol": "StyledText" },
+      "arguments": [
+        { "argument": "text", "source": { "kind": "constant", "value": "Text mapping placeholder" } }
+      ]
+    }
+  ]
+}

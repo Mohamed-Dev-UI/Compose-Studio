@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Compose Studio icon</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 128px; height: 128px; overflow: hidden; }
+  body {
+    width: 128px; height: 128px;
+    background: linear-gradient(135deg, #6a3de8 0%, #7f52ff 52%, #18a0fb 135%);
+    position: relative;
+  }
+  /* frost highlight for depth, like the in-panel logo */
+  .gloss {
+    position: absolute; left: 0; right: 0; top: 0; height: 50%;
+    background: linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0));
+  }
+  .layers {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .layers svg { width: 74px; height: 74px; }
+</style>
+</head>
+<body tabindex="0" aria-label="Plugin icon canvas">
+  <div class="gloss"></div>
+  <div class="layers">
+    <!-- Brand glyph: two overlapping rounded planes (Figma frame → Compose layers) -->
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <rect x="3" y="3" width="13" height="13" rx="3.2" fill="#ffffff" fill-opacity="0.42"/>
+      <rect x="8" y="8" width="13" height="13" rx="3.2" fill="#ffffff"/>
+    </svg>
+  </div>
+</body>
+</html>

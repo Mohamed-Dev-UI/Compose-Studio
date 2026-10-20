@@ -2,17 +2,13 @@
   "name": "Compose Studio",
   "id": "1693245508688915117",
   "api": "1.0.0",
-  "main": "code.js",
-  "capabilities": [],
-  "enableProposedApi": false,
+  "main": "dist/code.js",
+  "editorType": ["figma"],
+  "ui": "dist/ui.html",
   "documentAccess": "dynamic-page",
-  "editorType": [
-    "figma"
-  ],
-  "ui": "ui.html",
   "networkAccess": {
-    "allowedDomains": [
-      "none"
-    ]
-  }
+    "allowedDomains": ["none"]
+  },
+  "capabilities": [],
+  "enableProposedApi": false
 }
