@@ -155,10 +155,21 @@ export const ROLE_NOTES: Record<ComposeRole, string> = {
   listitem: 'mints `onClick`; the custom emission becomes ripple-free clickable',
 };
 
-/** One mapping argument value: a special source or a constant. */
+/** Explicit Kotlin literal types a constant mapping argument can carry. */
+export const MAPPING_ARG_DATATYPES = [
+  'int', 'long', 'float', 'double', 'boolean', 'string', 'char', 'dp', 'sp', 'color', 'object',
+] as const;
+
+export type MappingArgDataType = (typeof MAPPING_ARG_DATATYPES)[number];
+
+export function isMappingArgDataType(value: unknown): value is MappingArgDataType {
+  return (MAPPING_ARG_DATATYPES as readonly string[]).includes(value as string);
+}
+
+/** One mapping argument value: a special source, or a (typed) constant. */
 export type MappingArgSource =
   | { kind: 'text' | 'icon' | 'color' | 'content' | 'modifier' }
-  | { kind: 'constant'; value: string };
+  | { kind: 'constant'; value: string; dataType?: MappingArgDataType };
 
 export type ParsedComponentMappingArg = {
   /** Kotlin parameter name of the target composable. */
@@ -246,9 +257,45 @@ function splitTop(str: string): string[] {
 }
 
 /**
+ * Typed constant literal validation: returns an issue (downgrade reason) or
+ * `null` when the value fits the datatype. Values stay as typed by the user
+ * (rendering to Kotlin literals happens at generation).
+ */
+function typedLiteralIssue(dataType: MappingArgDataType, value: string): string | null {
+  const number = /^[+-]?(\d+(\.\d+)?|\.\d+)$/;
+  switch (dataType) {
+    case 'int':
+    case 'long':
+      return /^[+-]?\d+$/.test(value) ? null : "expects a whole number (e.g. a Kotlin Int/Long literal)";
+    case 'float':
+    case 'double':
+    case 'dp':
+    case 'sp':
+      return number.test(value) ? null : "expects a number (e.g. 0.5)";
+    case 'boolean':
+      return value === 'true' || value === 'false' ? null : "expects true or false";
+    case 'char':
+      return [...value].length === 1 ? null : "expects exactly one character";
+    case 'color': {
+      const hex = value.startsWith('#') ? value.slice(1) : value;
+      return /^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(hex) ? null : "expects a hex color (#RRGGBB or #AARRGGBB)";
+    }
+    case 'string':
+      return value.length > 0 ? null : "expects the string content (empty strings need the \"\" form)";
+    case 'object':
+      return value.trim().length > 0 ? null : "expects a Kotlin expression (e.g. TextStyle.Default)";
+  }
+}
+
+/**
  * Parses one `mappingArgs` value: a comma-separated list of `arg=value`
- * entries where values are `@text`/`@icon`/`@color`/`@content`/`@modifier`
- * sources or constants (`"quoted"` / `true` / `42` / any Kotlin expression).
+ * entries where values are design sources (`@text`/`@icon`/`@color`/
+ * `@content`/`@modifier`), typed constants (`int:42` / `long:1` / `float:0.5` /
+ * `double:0.5` / `boolean:true` / `string:label` / `char:a` / `dp:16` /
+ * `sp:14` / `color:8080FF` / `object:TextStyle.Default` — the `@type:value`
+ * spelling is accepted too, and payload quoting protects commas), or untyped
+ * Kotlin constants (`"quoted"` / `true` / `42` / any Kotlin expression) which
+ * remain valid for older blocks.
  */
 export function parseMappingArgs(value: string): { args: ParsedComponentMappingArg[]; issues: string[] } {
   const args: ParsedComponentMappingArg[] = [];
@@ -264,22 +311,54 @@ export function parseMappingArgs(value: string): { args: ParsedComponentMappingA
       issues.push(`mappingArgs argument name '${argument}' is not a Kotlin identifier; skipped`);
       continue;
     }
-    const valueText = raw.slice(eq + 1).trim();
-    let source: MappingArgSource;
-    if (valueText.startsWith('@')) {
-      const name = valueText.slice(1).toLowerCase();
-      if ((SPECIAL_ARG_KINDS as readonly string[]).includes(name)) {
-        source = { kind: name as SpecialArgKind };
-      } else {
-        source = { kind: 'constant', value: unquote(valueText) };
-        issues.push(`unknown mapping source '${valueText}'; treated as a constant (known: ${SPECIAL_ARG_KINDS.map((k) => `@${k}`).join(', ')})`);
-      }
-    } else {
-      source = { kind: 'constant', value: unquote(valueText) };
-    }
+    const { source, issue } = mappingArgSource(argument, raw.slice(eq + 1).trim());
+    if (issue) issues.push(issue);
     args.push({ argument, source });
   }
   return { args, issues };
+}
+
+/** Typed constant (`type:value` / `@type:value`), possibly downgraded with a note. */
+function typedArgSource(
+  argument: string,
+  dataType: MappingArgDataType,
+  payload: string,
+): { source: MappingArgSource; issue?: string } {
+  const value = unquote(payload);
+  const problem = typedLiteralIssue(dataType, value);
+  if (problem === null) return { source: { kind: 'constant', value, dataType } };
+  return {
+    source: { kind: 'constant', value },
+    issue: `mappingArgs value for '${argument}' is not valid for @${dataType} (${problem}); treated as a plain constant`,
+  };
+}
+
+/** Resolves the source half of one `=`-split entry. */
+function mappingArgSource(argument: string, valueText: string): { source: MappingArgSource; issue?: string } {
+  if (valueText.startsWith('@')) {
+    const rest = valueText.slice(1);
+    const colon = rest.indexOf(':');
+    const token = (colon >= 0 ? rest.slice(0, colon) : rest).toLowerCase();
+    // Bare design sources never carry values; a colon payload means typed.
+    if (colon < 0 && (SPECIAL_ARG_KINDS as readonly string[]).includes(token)) {
+      return { source: { kind: token as SpecialArgKind } };
+    }
+    if (colon >= 0 && isMappingArgDataType(token)) {
+      return typedArgSource(argument, token, rest.slice(colon + 1));
+    }
+    return {
+      source: { kind: 'constant', value: unquote(valueText) },
+      issue: `unknown mapping source '${valueText}'; treated as a constant (sources: @text/@icon/@color/@content/@modifier; typed values: int:42, float:0.5, dp:16, object:Expr, …)`,
+    };
+  }
+  // Bare form: `type:value` when the head token names a datatype, else a
+  // plain untyped constant (legacy blocks keep working).
+  const colon = valueText.indexOf(':');
+  const head = colon >= 0 ? valueText.slice(0, colon).toLowerCase() : null;
+  if (head !== null && isMappingArgDataType(head)) {
+    return typedArgSource(argument, head, valueText.slice(colon + 1));
+  }
+  return { source: { kind: 'constant', value: unquote(valueText) } };
 }
 
 /**
@@ -421,13 +500,17 @@ function mappingArgToText(arg: ParsedComponentMappingArg): string {
   const v = arg.source;
   if (v.kind === 'constant') {
     const text = String(v.value);
-    const needsQuotes =
-      text === '' ||
-      text !== text.trim() ||
-      text.startsWith('@') ||
-      /[,=#"'`\n]/.test(text);
-    const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    return `${arg.argument}=${needsQuotes ? `"${escaped}"` : text}`;
+    const wrap = (raw: string): string => {
+      const needsQuotes =
+        raw === '' ||
+        raw !== raw.trim() ||
+        raw.startsWith('@') ||
+        /[,=#"'`\n]/.test(raw);
+      const escaped = raw.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      return needsQuotes ? `"${escaped}"` : raw;
+    };
+    if (v.dataType) return `${arg.argument}=${v.dataType}:${wrap(text)}`;
+    return `${arg.argument}=${wrap(text)}`;
   }
   return `${arg.argument}=@${v.kind}`;
 }
@@ -464,7 +547,7 @@ export function buildComposeConfigBlock(config: ParsedComponentConfig, withHelp 
   if (config.mappingArgs.length > 0) {
     lines.push(`mappingArgs: ${config.mappingArgs.map(mappingArgToText).join(', ')}`);
   } else if (withHelp) {
-    lines.push('# mappingArgs: label="Sign In", count=2, icon=@icon');
+    lines.push('# mappingArgs: title="Sign In", count=int:2, opacity=float:0.5, icon=@icon');
   }
   add('note', config.note, withHelp ? '# note: copied into the generated file as a comment' : undefined);
   return lines.join('\n');
@@ -509,8 +592,12 @@ export const COMPOSE_CONFIG_TEMPLATE = [
   '#',
   '# mapping maps this component to an app composable instead of generating:',
   '#   mapping: MyAppButton',
-  '#   mappingArgs: title="Sign In", count=2, icon=@icon',
+  '#   mappingArgs: title="Sign In", count=int:2, delay=long:1, opacity=float:0.5,',
+  '#                padding=dp:16, fontSize=sp:14, tint=color:8080FF, icon=@icon',
   '#   sources: @text first text | @icon icon | @color color | @content slot | @modifier modifier',
+  '#   typed constants: int long float double boolean string char dp sp color object',
+  '#   (e.g. boolean:true, string:label, char:a, object:TextStyle.Default; 42/"x"',
+  '#    stay valid untyped constants)',
   '#',
   '# note: extra human context, copied into the generated file as a comment',
   'role: card',
@@ -573,6 +660,7 @@ export function normalizeComponentConfig(raw: unknown): { config: ParsedComponen
   }
   if (Array.isArray(src.mappingArgs)) {
     const seen = new Set<string>();
+    const known = [...SPECIAL_ARG_KINDS, ...MAPPING_ARG_DATATYPES].map((k) => `@${k}`).join(', ');
     for (const rawArg of src.mappingArgs) {
       if (typeof rawArg !== 'object' || rawArg === null) {
         issues.push('mappingArgs entry is not an object; skipped');
@@ -590,15 +678,27 @@ export function normalizeComponentConfig(raw: unknown): { config: ParsedComponen
       }
       seen.add(argument);
       const rawSource = entry.source;
+      // Typed payloads rebuild a serialized config (the visual editor, presets)
+      // — trust the field but still validate the datatype tag.
       let source: MappingArgSource = { kind: 'constant', value: '' };
       if (typeof rawSource === 'object' && rawSource !== null && !Array.isArray(rawSource)) {
         const s = rawSource as Record<string, unknown>;
         const sKind = text(s.kind);
         if (sKind !== null && sKind !== 'constant' && (SPECIAL_ARG_KINDS as readonly string[]).includes(sKind)) {
           source = { kind: sKind as SpecialArgKind };
+        } else if (sKind === 'constant') {
+          const dataType = s.dataType;
+          if (isMappingArgDataType(dataType)) source = { kind: 'constant', value: text(s.value) ?? '', dataType };
+          else if (dataType !== undefined) {
+            issues.push(`unknown mapping datatype '${String(dataType)}'; treated as a constant (known: ${MAPPING_ARG_DATATYPES.join(', ')})`);
+            source = { kind: 'constant', value: text(s.value) ?? '' };
+          } else source = { kind: 'constant', value: text(s.value) ?? '' };
+        } else if (typeof s.value === 'string' && isMappingArgDataType(sKind) && s.value !== '') {
+          // Shorthand `{ kind: '@int', value: '42' }` — a typed constant without `dataType`.
+          source = { kind: 'constant', value: s.value, dataType: sKind };
         } else {
           if (sKind !== null && sKind !== 'constant') {
-            issues.push(`unknown mapping source '${sKind}'; treated as a constant (known: ${SPECIAL_ARG_KINDS.map((k) => `@${k}`).join(', ')})`);
+            issues.push(`unknown mapping source '${sKind}'; treated as a constant (known: ${known})`);
           }
           source = { kind: 'constant', value: text(s.value) ?? '' };
         }
@@ -634,7 +734,13 @@ export function composeConfigSignature(config: ParsedComponentConfig): string {
     config.assets,
     config.implementation,
     config.mapping ?? '',
-    config.mappingArgs.map((a) => `${a.argument}:${a.source.kind === 'constant' ? `=${a.source.value}` : `@${a.source.kind}`}`).join('|'),
+    config.mappingArgs
+      .map((a) => {
+        const v = a.source;
+        if (v.kind !== 'constant') return `${a.argument}:@${v.kind}`;
+        return `${a.argument}:@${v.dataType ?? 'raw'}=${v.value}`;
+      })
+      .join('|'),
     config.note ?? '',
   ].join('~');
 }

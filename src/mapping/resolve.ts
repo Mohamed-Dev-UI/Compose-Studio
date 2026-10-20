@@ -115,7 +115,9 @@ export function verifyComponentMapping(
       continue;
     }
     if (arg.source.kind === 'constant') {
-      preview.push([arg.argument, `"${arg.source.value}"`]);
+      const dt = arg.source.dataType;
+      const shown = dt === 'string' ? `"${arg.source.value}"` : dt && dt !== 'object' ? `@${dt}:…` : arg.source.value;
+      preview.push([arg.argument, shown]);
       continue;
     }
     if (arg.source.kind === 'variantProp') {

@@ -64,6 +64,7 @@ import {
   ROLE_NOTES,
   ROLE_PARAMETERS,
   WIRED_ROLES,
+  type MappingArgDataType,
   type ParsedComponentConfig,
 } from '../shared/compose-config.ts';
 
@@ -655,7 +656,11 @@ class Generator {
     if (!cached) {
       const arguments_: ComponentArgumentMapping[] = cfg.mappingArgs.map((arg) => ({
         argument: arg.argument,
-        source: arg.source.kind === 'constant' ? { kind: 'constant', value: arg.source.value } : { kind: arg.source.kind, ...(arg.source.kind === 'text' || arg.source.kind === 'icon' ? { childIndex: 0 } : {}) },
+        source: arg.source.kind === 'constant'
+          ? (arg.source.dataType
+            ? { kind: 'constant', value: arg.source.value, dataType: arg.source.dataType }
+            : { kind: 'constant', value: arg.source.value })
+          : { kind: arg.source.kind, ...(arg.source.kind === 'text' || arg.source.kind === 'icon' ? { childIndex: 0 } : {}) },
       }));
       cached = {
         source: { kind: 'component', variableId: node.componentKey, componentName: node.componentName },
@@ -2170,9 +2175,13 @@ class Generator {
           break;
         }
         case 'constant': {
-          const v = arg.source.value;
-          const literal = /^(true|false|-?\d+(\.\d+)?)$/.test(v) ? v : `"${escapeKotlinString(v)}"`;
-          chips.push(`${arg.argument} = ${literal}`);
+          if (arg.source.dataType) {
+            chips.push(`${arg.argument} = ${this.typedConstantLiteral(arg.source.dataType, arg.source.value, env)}`);
+          } else {
+            const v = arg.source.value;
+            const literal = /^(true|false|-?\d+(\.\d+)?)$/.test(v) ? v : `"${escapeKotlinString(v)}"`;
+            chips.push(`${arg.argument} = ${literal}`);
+          }
           break;
         }
         case 'variantProp': {
@@ -2233,6 +2242,51 @@ class Generator {
         : this.childEmitterFor(instanceChildren, layout, ctx)
       : null;
     this.call(mapping.target.symbol, chips, ctx.indent, body);
+  }
+
+  /**
+   * Renders one typed constant as its Kotlin literal. Values were validated at
+   * parse time, so the shapes normally pass; anything odd degrades to a
+   * quoted string rather than emitting broken Kotlin.
+   */
+  private typedConstantLiteral(dataType: MappingArgDataType, value: string, env: EmitEnv): string {
+    const numeric = /^[+-]?(\d+(\.\d+)?|\.\d+)$/;
+    switch (dataType) {
+      case 'int':
+        return /^[+-]?\d+$/.test(value) ? value : `"${escapeKotlinString(value)}"`;
+      case 'long':
+        return /^[+-]?\d+$/.test(value) ? `${value}L` : `"${escapeKotlinString(value)}"`;
+      case 'float':
+        return numeric.test(value) ? `${value}f` : `"${escapeKotlinString(value)}"`;
+      case 'double':
+        return numeric.test(value) ? (value.includes('.') ? value : `${value}.0`) : `"${escapeKotlinString(value)}"`;
+      case 'boolean':
+        return value === 'true' || value === 'false' ? value : `"${escapeKotlinString(value)}"`;
+      case 'char':
+        return [...value].length === 1
+          ? `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+          : `"${escapeKotlinString(value)}"`;
+      case 'dp': {
+        if (!numeric.test(value)) return `"${escapeKotlinString(value)}"`;
+        env.useImport('androidx.compose.ui.unit.dp');
+        return `${value}.dp`;
+      }
+      case 'sp': {
+        if (!numeric.test(value)) return `"${escapeKotlinString(value)}"`;
+        env.useImport('androidx.compose.ui.unit.sp');
+        return `${value}.sp`;
+      }
+      case 'color': {
+        const hex = (value.startsWith('#') ? value.slice(1) : value).toUpperCase();
+        if (!/^[0-9A-F]{6}([0-9A-F]{2})?$/.test(hex)) return `"${escapeKotlinString(value)}"`;
+        env.useImport('androidx.compose.ui.graphics.Color');
+        return `Color(0x${hex.length === 6 ? `FF${hex}` : hex})`;
+      }
+      case 'string':
+        return `"${escapeKotlinString(value)}"`;
+      case 'object':
+        return value;
+    }
   }
 
   private missingMappedArg(

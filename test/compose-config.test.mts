@@ -291,6 +291,86 @@ test('normalizeComponentConfig round-trips through the block builder like a pars
   assert.equal(blanks.config.note, null);
 });
 
+test('parseMappingArgs reads typed constants for every datatype', () => {
+  const typed = 'count=int:42, delay=long:5, opacity=float:0.5, ratio=double:0.5, on=boolean:true';
+  const { args, issues } = parseMappingArgs(`${typed}, title=string:Sign In, c=char:a, pad=dp:16, size=sp:14, tint=color:8080FF, style=object:TextStyle.Default`);
+  assert.deepEqual(issues, []);
+  const byName = new Map(args.map((a) => [a.argument, a]));
+  assert.equal(byName.size, 11, 'it counts every typed entry');
+  assert.deepEqual(byName.get('count')!.source, { kind: 'constant', value: '42', dataType: 'int' });
+  assert.deepEqual(byName.get('delay')!.source, { kind: 'constant', value: '5', dataType: 'long' });
+  assert.deepEqual(byName.get('opacity')!.source, { kind: 'constant', value: '0.5', dataType: 'float' });
+  assert.deepEqual(byName.get('ratio')!.source, { kind: 'constant', value: '0.5', dataType: 'double' });
+  assert.deepEqual(byName.get('on')!.source, { kind: 'constant', value: 'true', dataType: 'boolean' });
+  assert.deepEqual(byName.get('title')!.source, { kind: 'constant', value: 'Sign In', dataType: 'string' });
+  assert.deepEqual(byName.get('c')!.source, { kind: 'constant', value: 'a', dataType: 'char' });
+  assert.deepEqual(byName.get('pad')!.source, { kind: 'constant', value: '16', dataType: 'dp' });
+  assert.deepEqual(byName.get('size')!.source, { kind: 'constant', value: '14', dataType: 'sp' });
+  assert.deepEqual(byName.get('tint')!.source, { kind: 'constant', value: '8080FF', dataType: 'color' });
+  assert.deepEqual(byName.get('style')!.source, { kind: 'constant', value: 'TextStyle.Default', dataType: 'object' });
+});
+
+test('parseMappingArgs tolerates bad typed payloads by downgrading to plain constants', () => {
+  const { args, issues } = parseMappingArgs('a=int:12.5, b=boolean:yes, c=char:ab, d=color:#GGG, e=dp:x, s=string:, o=object:');
+  assert.equal(args.length, 7);
+  assert.deepEqual(
+    args.map((a) => (a.source.kind === 'constant' ? a.source.value : null)),
+    ['12.5', 'yes', 'ab', '#GGG', 'x', '', ''],
+  );
+  assert.equal(args.every((a) => a.source.kind === 'constant' && !('dataType' in a.source)), true, 'nothing keeps its datatype');
+  assert.equal(issues.length, 7, 'each downgrade is noted');
+  assert.match(issues[0]!, /not valid for @int/);
+});
+
+test('typed mapping arguments round-trip through the block builder (quoted payloads survive commas)', () => {
+  const parsed = parseComposeConfig(
+    'compose-studio:\nmapping: MyApp\nmappingArgs: title=string:"a, b", tint=color:80FF40, pad=dp:16',
+  ).config!;
+  const rebuilt = buildComposeConfigBlock(parsed);
+  assert.match(rebuilt, /title=string:"a, b"/, 'the comma payload gets its quotes back');
+  assert.match(rebuilt, /tint=color:80FF40/);
+  assert.match(rebuilt, /pad=dp:16/);
+  const reparsed = parseComposeConfig(`compose-studio:\n${rebuilt}`).config!;
+  assert.deepEqual(reparsed.mappingArgs, parsed.mappingArgs, 'the parser reproduces the typed sources');
+  assert.equal(composeConfigSignature(reparsed), composeConfigSignature(parsed));
+  // Untyped constants keep the legacy text form (not typed).
+  const legacy = parseComposeConfig('compose-studio:\nmappingArgs: count=2, label="a, b"').config!;
+  const legacyBuilt = buildComposeConfigBlock(legacy);
+  assert.match(legacyBuilt, /count=2(?![\d])/);
+  assert.match(legacyBuilt, /label="a, b"/);
+  assert.doesNotMatch(legacyBuilt, /int:|string:/);
+});
+
+test('normalizeComponentConfig carries typed constants and validates the datatype tag', () => {
+  const ok = normalizeComponentConfig({
+    mappingArgs: [{ argument: 'count', source: { kind: 'constant', value: '42', dataType: 'int' } }],
+  });
+  assert.deepEqual(ok.config.mappingArgs[0]!.source, { kind: 'constant', value: '42', dataType: 'int' });
+  // A JS-object shorthand kind of the datatype renders too (typed without dataType field).
+  const shorthand = normalizeComponentConfig({
+    mappingArgs: [{ argument: 'count', source: { kind: 'int', value: '42' } }],
+  });
+  assert.deepEqual(shorthand.config.mappingArgs[0]!.source, { kind: 'constant', value: '42', dataType: 'int' });
+  // An unknown datatype tag degrades to a plain constant with a note.
+  const bad = normalizeComponentConfig({
+    mappingArgs: [{ argument: 'count', source: { kind: 'constant', value: '42', dataType: 'bigint' } }],
+  });
+  assert.deepEqual(bad.config.mappingArgs[0]!.source, { kind: 'constant', value: '42' });
+  assert.equal(bad.issues.length, 1, 'the unknown tag was reported');
+  // The signature distinguishes types (int 1 vs string "1" vs raw 1).
+  const sig = (args: unknown[]): string => composeConfigSignature(
+    normalizeComponentConfig({ mappingArgs: args }).config,
+  );
+  assert.notEqual(
+    sig([{ argument: 'a', source: { kind: 'constant', value: '1', dataType: 'int' } }]),
+    sig([{ argument: 'a', source: { kind: 'constant', value: '1' } }]),
+  );
+  assert.notEqual(
+    sig([{ argument: 'a', source: { kind: 'constant', value: '1', dataType: 'int' } }]),
+    sig([{ argument: 'a', source: { kind: 'constant', value: '1', dataType: 'string' } }]),
+  );
+});
+
 test('suggestMappingName derives a Kotlin function name from the master name', () => {
   assert.equal(suggestMappingName('Working Level'), 'WorkingLevel');
   assert.equal(suggestMappingName('Button/B'), 'ButtonB');

@@ -8,6 +8,8 @@
  * `content`), not arbitrary expressions.
  */
 
+import { MAPPING_ARG_DATATYPES, isMappingArgDataType, type MappingArgDataType } from '../shared/compose-config.ts';
+
 export type ColorMappingSource = {
   kind: 'variable' | 'hex';
   /** Figma variable name (kind: variable) or hex string like "#RRGGBB" (kind: hex). */
@@ -51,7 +53,8 @@ export type ComponentArgumentSource =
   | { kind: 'text'; childIndex?: number }
   | { kind: 'icon'; childIndex?: number }
   | { kind: 'color' }
-  | { kind: 'constant'; value: string }
+  /** A constant Kotlin value; `dataType` renders the literal (e.g. Long suffix, `.dp`). */
+  | { kind: 'constant'; value: string; dataType?: MappingArgDataType }
   | { kind: 'variantProp'; name: string; cases?: Record<string, string> }
   /** Pass computed modifiers to the mapped composable. */
   | { kind: 'modifier' }
@@ -364,13 +367,28 @@ function parseArgumentMapping(item: unknown, path: string, diagnostics: Validati
     case 'color':
       source = { kind: 'color' };
       break;
-    case 'constant':
+    case 'constant': {
       if (typeof src['value'] !== 'string') {
         diagnostics.push({ level: 'ERROR', path: `${path}.source.value`, message: "Constant source requires a string 'value'." });
         return null;
       }
-      source = { kind: 'constant', value: src['value'] as string };
+      const rawDataType = src['dataType'];
+      if (rawDataType === undefined) {
+        source = { kind: 'constant', value: src['value'] as string };
+        break;
+      }
+      if (typeof rawDataType === 'string' && isMappingArgDataType(rawDataType)) {
+        source = { kind: 'constant', value: src['value'] as string, dataType: rawDataType };
+      } else {
+        diagnostics.push({
+          level: 'ERROR',
+          path: `${path}.source.dataType`,
+          message: `Constant source dataType must be one of ${MAPPING_ARG_DATATYPES.join(', ')}.`,
+        });
+        return null;
+      }
       break;
+    }
     case 'variantProp':
       if (typeof src['name'] !== 'string' || !src['name']) {
         diagnostics.push({ level: 'ERROR', path: `${path}.source.name`, message: "variantProp source requires a 'name'." });

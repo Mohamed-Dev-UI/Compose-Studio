@@ -224,7 +224,7 @@ the target composable:
 | `text`         | contents of the Nth text node (`childIndex`, document order)                                      |
 | `icon`         | `painterResource(R.drawable.ic_…)` for the Nth vector child (document order)                       |
 | `color`        | the resolved color expression of the first text fill or solid background                          |
-| `constant`     | Kotlin literal: `true`/`false`/numbers raw, other strings quoted and escaped                      |
+| `constant`     | Kotlin literal: `true`/`false`/numbers raw, other strings quoted and escaped. An optional `dataType` (`int`, `long`, `float`, `double`, `boolean`, `string`, `char`, `dp`, `sp`, `color`, `object`) renders the literal explicitly: `long:1` → `1L`, `float:0.5` → `0.5f`, `double:5` → `5.0`, `char:a` → `'a'`, `dp:16` → `16.dp`, `sp:14` → `14.sp`, `color:8080FF` → `Color(0xFF8080FF)`, `string` → quoted/escaped, `object` → the raw Kotlin expression |
 | `variantProp`  | mapped enum case of the instance's Figma variant property                                         |
 | `modifier`     | receives the composed modifier chain of the instance                                              |
 | `content`      | trailing lambda; children of the instance are rendered inside it                                  |
@@ -438,7 +438,7 @@ note: human note, copied into the generated file
 | `assets`         | `auto` (default) \| `export` (the whole component exports as an asset instead of code) \| `code` (always code, never an asset — overrides `kind`) |
 | `implementation` | `auto` (Material composable when the look can be matched exactly) \| `custom` (always the plain emission) |
 | `mapping`        | Kotlin symbol (simple or `pkg.Named`) of an app composable; instances call it   |
-| `mappingArgs`    | comma list of `arg=value`; sources `@text` (first text), `@icon`, `@color`, `@content` (content lambda), `@modifier`; anything else is a constant Kotlin expression (`42`, `0.8f`, `"quoted"`; quotation is optional for plain words) |
+| `mappingArgs`    | comma list of `arg=value`; design sources `@text` (first text), `@icon`, `@color`, `@content` (content lambda), `@modifier`; typed constants `int:42`, `long:1`, `float:0.5`, `double:0.5`, `boolean:true`, `string:label`, `char:a`, `dp:16`, `sp:14`, `color:RRGGBB`, `object:Expr` — the plugin writes the Kotlin literal (quotes, `0.5f`, `16.dp`, `Color(0xFF…)`); anything else is a constant Kotlin expression (`42`, `0.8f`, `"quoted"`; quotation is optional for plain words). Typing an invalid payload (e.g. `int:12.5`) degrades to a plain constant with a report |
 | `note`           | free text; emitted as a comment above the composable                            |
 
 Lines starting with `#` are comments; unknown keys or values are reported
@@ -527,7 +527,7 @@ once). Instead of editing text, fields are parsed-config controls:
 | Asset kind                   | `none` / `icon` / `image` / `vector` segments |
 | Assets policy                | `auto` / `export` / `code` segments           |
 | Implementation               | `auto` / `custom` (only when the role is `card` / `button` / `fab`) |
-| Mapping                      | text input; seeded with a Kotlin function name derived from the component name (`Working Level` → `WorkingLevel`) whenever the component carries no mapping — edit or clear it, nothing is written until **Apply**; mapping arguments get a row editor (name + source + constant value). The rows and the *+ Add argument* button unlock the moment the mapping is set; until then the button renders disabled with a tooltip and a hint explains that a mapping is required |
+| Mapping                      | text input; seeded with a Kotlin function name derived from the component name (`Working Level` → `WorkingLevel`) whenever the component carries no mapping — edit or clear it, nothing is written until **Apply**; mapping arguments get a row editor (name + source + constant value): design sources `@text`/`@icon`/`@color`/`@content`/`@modifier` plus typed constants (`int`, `long`, `float`, `double`, `boolean`, `string`, `char`, `dp`, `sp`, `color`, `object`) whose Kotlin literal is rendered by the plugin (`0.5f`, `16.dp`, `Color(0xFF…)`); the constant-entry row keeps the raw untyped fallback. The rows and the *+ Add argument* button unlock the moment the mapping is set; until then the button renders disabled with a tooltip and a hint explains that a mapping is required |
 | Note                         | free-text area                                |
 
 Actions per editor: **Apply** (writes prose + rendered block per component,
@@ -873,6 +873,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 @Composable
 fun LoginScreen(

@@ -587,7 +587,7 @@
     </div>
     <div class="brand-text">
       <h1>Compose Studio</h1>
-      <span class="brand-sub">Figma selection → Jetpack Compose · <span id="buildTag">rev. 34</span></span>
+      <span class="brand-sub">Figma selection → Jetpack Compose · <span id="buildTag">rev. 35</span></span>
     </div>
   </header>
 
@@ -886,7 +886,7 @@
 # assets: auto | export | code
 # implementation: auto | custom
 # mapping: MyAppButton
-# mappingArgs: label="Sign In", count=2, icon=@icon
+# mappingArgs: label="Sign In", count=int:2, delay=long:1, opacity=float:0.5, padding=dp:16, icon=@icon
 # note: copied into the generated file as a comment
 role: card</div>
           <p class="hint">Prose above the marker is preserved verbatim on every rewrite, and comments inside the block survive the raw/advanced editor. Description edits made in Figma’s own info panel may lag until the component is re-published.</p>
@@ -974,8 +974,8 @@ role: card</div>
         <div class="card-body">
           <p class="hint"><code>mapping</code> is a Kotlin symbol (simple or fully qualified). <code>mappingArgs</code> fills the target composable’s parameters — recursion walks the instance subtree: the first text becomes the string, an icon/vector child becomes the icon asset, a solid color becomes its hex, text-node children become <code>@content</code> slots, and the root’s modifier slot becomes <code>@modifier</code>. Quoted values are constants, and <code>true</code>/<code>42</code> are Kotlin literals.</p>
           <div class="cc-code">mapping: com.example.ui.MyButton
-mappingArgs: title="Sign In", icon=@icon, color=#5551FF, label=@text</div>
-          <p class="hint">Mapping sources: <code>@text</code> first text · <code>@icon</code> icon · <code>@color</code> color · <code>@content</code> text slot · <code>@modifier</code> modifier.</p>
+mappingArgs: title=string:"Sign In", icon=@icon, maxLines=int:2, ratio=double:0.5, padding=dp:16, tint=color:8080FF, style=object:TextStyle.Default</div>
+          <p class="hint">Mapping sources: <code>@text</code> first text · <code>@icon</code> icon · <code>@color</code> color · <code>@content</code> text slot · <code>@modifier</code> modifier. Typed constants: <code>@int</code> · <code>@long</code> (adds <code>L</code>) · <code>@float</code> (adds <code>f</code>) · <code>@double</code> · <code>@boolean</code> · <code>@string</code> (quoted) · <code>@char</code> · <code>@dp</code> (<code>16.dp</code>) · <code>@sp</code> (<code>14.sp</code>) · <code>@color</code> hex → <code>Color(0x…)</code> · <code>@object</code> raw Kotlin expression. Untyped values (<code>42</code>, <code>"quoted"</code>, raw expressions) still work.</p>
         </div>
       </details>
 
@@ -1823,6 +1823,12 @@ const CC_ROLE_LABELS = {
 };
 const CC_MATERIAL_ROLES = ['card', 'button', 'fab'];
 const CC_ARG_SOURCES = ['text', 'icon', 'color', 'content', 'modifier'];
+const CC_ARG_DATATYPES = ['int', 'long', 'float', 'double', 'boolean', 'string', 'char', 'dp', 'sp', 'color', 'object'];
+const CC_ARG_PLACEHOLDERS = {
+  constant: 'e.g. "Sign In"',
+  int: '42', long: '42', float: '0.5', double: '0.5', boolean: 'true',
+  string: 'text', char: 'a', dp: '16', sp: '14', color: '#8080FF', object: 'TextStyle.Default',
+};
 
 let ccPayload = null; // last 'component-configs' payload
 let ccPresets = []; // saved presets (kept current by payload / 'component-presets')
@@ -1908,6 +1914,7 @@ function ccBuildEditor(masters) {
     state.args.rows = args.map((a) => ({
       argument: a.argument,
       sourceKind: a.source && a.source.kind ? a.source.kind : 'constant',
+      dataType: a.source && a.source.kind === 'constant' && a.source.dataType ? String(a.source.dataType) : null,
       value: a.source && a.source.kind === 'constant' ? String(a.source.value ?? '') : '',
     }));
   } else {
@@ -1959,7 +1966,9 @@ function ccConfigForMaster(master) {
           .filter((row) => String(row.argument || '').trim() !== '')
           .map((row) => ({
             argument: row.argument,
-            source: row.sourceKind === 'constant' ? { kind: 'constant', value: row.value } : { kind: row.sourceKind },
+            source: row.sourceKind === 'constant'
+              ? (row.dataType ? { kind: 'constant', value: row.value, dataType: row.dataType } : { kind: 'constant', value: row.value })
+              : { kind: row.sourceKind },
           }))
       : (base.mappingArgs || []),
   };
@@ -2221,7 +2230,7 @@ function ccFieldArgs() {
     const hint = document.createElement('p');
     hint.className = 'hint';
     hint.innerHTML = 'Type a <b>mapping</b> above first — argument rows and <b>+ Add argument</b> unlock the moment it is set. Sources: '
-      + CC_ARG_SOURCES.map((s) => '@' + s).join(' · ') + ' fill the mapped composable\'s parameters; quoted/typed values are constants.';
+      + CC_ARG_SOURCES.map((s) => '@' + s).join(' · ') + ' read the design; the type names mean typed Kotlin constants — the plugin writes the literal for you (<code>int 42</code>, <code>float 0.5f</code>, <code>dp 16.dp</code>, <code>color Color(0xFF…)</code>, <code>object TextStyle.Default</code>).';
     wrap.appendChild(hint);
   }
   const rows = mappingActive && !ccEditor.args.mixed ? ccEditor.args.rows : [];
@@ -2238,7 +2247,7 @@ function ccFieldArgs() {
     add.title = 'Add a mapping above first — arguments target its composable parameters.';
   } else {
     add.onclick = () => {
-      ccEditor.args.rows.push({ argument: '', sourceKind: 'constant', value: '' });
+      ccEditor.args.rows.push({ argument: '', sourceKind: 'constant', value: '', dataType: null });
       ccTouchArgs();
     };
   }
@@ -2268,22 +2277,39 @@ function ccFieldArgs() {
       ccEditor.args.touched = true;
     };
     const sourceSelect = document.createElement('select');
-    for (const src of ['constant'].concat(CC_ARG_SOURCES)) {
+    const addOpt = (value, labelText) => {
       const opt = document.createElement('option');
-      opt.value = src;
-      opt.textContent = src === 'constant' ? 'constant' : '@' + src;
+      opt.value = value;
+      opt.textContent = labelText;
       sourceSelect.appendChild(opt);
-    }
-    sourceSelect.value = row.sourceKind || 'constant';
+    };
+    addOpt('constant', 'constant');
+    for (const src of CC_ARG_SOURCES) addOpt(src, '@' + src);
+    // Typed constants: the plugin renders the Kotlin literal (0.5f, 16.dp, Color…).
+    for (const dt of CC_ARG_DATATYPES) addOpt('typed:' + dt, dt);
+    sourceSelect.value = row.sourceKind === 'constant'
+      ? (row.dataType ? 'typed:' + row.dataType : 'constant')
+      : (row.sourceKind || 'constant');
     sourceSelect.onchange = () => {
-      row.sourceKind = sourceSelect.value;
-      row.value = sourceSelect.value === 'constant' ? row.value : '';
+      const picked = sourceSelect.value;
+      if (picked.startsWith('typed:')) {
+        row.sourceKind = 'constant';
+        row.dataType = picked.slice(6);
+      } else if (picked === 'constant') {
+        row.sourceKind = 'constant';
+        row.dataType = null;
+      } else {
+        row.sourceKind = picked;
+        row.dataType = null;
+        row.value = '';
+      }
       ccEditor.args.touched = true;
       renderComponentEditorBody();
     };
     const valueInput = document.createElement('input');
     valueInput.type = 'text';
-    valueInput.placeholder = 'e.g. "Sign In"';
+    const typed = row.sourceKind === 'constant' && row.dataType;
+    valueInput.placeholder = CC_ARG_PLACEHOLDERS[typed ? row.dataType : 'constant'] || CC_ARG_PLACEHOLDERS.constant;
     valueInput.value = row.sourceKind === 'constant' ? row.value : '';
     valueInput.disabled = row.sourceKind !== 'constant';
     valueInput.oninput = () => {
@@ -2520,6 +2546,7 @@ function loadComponentPreset(name) {
   ccEditor.args.rows = (config.mappingArgs || []).map((a) => ({
     argument: a.argument,
     sourceKind: a.source && a.source.kind ? a.source.kind : 'constant',
+    dataType: a.source && a.source.kind === 'constant' && a.source.dataType ? String(a.source.dataType) : null,
     value: a.source && a.source.kind === 'constant' ? String(a.source.value ?? '') : '',
   }));
   renderComponentEditorBody();
@@ -2584,7 +2611,9 @@ function currentPresetConfig() {
           .filter((row) => String(row.argument || '').trim() !== '')
           .map((row) => ({
             argument: row.argument,
-            source: row.sourceKind === 'constant' ? { kind: 'constant', value: row.value } : { kind: row.sourceKind },
+            source: row.sourceKind === 'constant'
+              ? (row.dataType ? { kind: 'constant', value: row.value, dataType: row.dataType } : { kind: 'constant', value: row.value })
+              : { kind: row.sourceKind },
           }))
       : (base.mappingArgs || []),
   };

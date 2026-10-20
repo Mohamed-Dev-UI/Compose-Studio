@@ -80,6 +80,49 @@ test('parseMappingProfile flags duplicate argument names once', () => {
   assert.equal(result.diagnostics.filter((d) => d.message.includes("Duplicate argument name 'x'")).length, 1);
 });
 
+test('constant profile sources accept an optional typed dataType (and reject junk)', () => {
+  const withTypes = parseMappingProfile({
+    ...validProfileJson,
+    components: [{
+      source: { kind: 'component', componentName: 'Badge' },
+      target: { symbol: 'AppBadge' },
+      arguments: [
+        { argument: 'count', source: { kind: 'constant', value: '2', dataType: 'int' } },
+        { argument: 'pad', source: { kind: 'constant', value: '16', dataType: 'dp' } },
+      ],
+    }],
+  });
+  assert.equal(withTypes.diagnostics.length, 0);
+  const args = withTypes.profile!.components[0]!.arguments;
+  assert.deepEqual(args[0]!.source, { kind: 'constant', value: '2', dataType: 'int' });
+  assert.deepEqual(args[1]!.source, { kind: 'constant', value: '16', dataType: 'dp' });
+  // A value-less datatype tag or an unknown one is an ERROR (strict JSON):
+  // the argument is skipped, the rest of the profile still parses.
+  const bad = parseMappingProfile({
+    ...validProfileJson,
+    components: [{
+      source: { kind: 'component', componentName: 'Badge' },
+      target: { symbol: 'AppBadge' },
+      arguments: [{ argument: 'x', source: { kind: 'constant', value: '2', dataType: 'bigint' } }],
+    }],
+  });
+  assert.notEqual(bad.profile, null, 'one bad argument does not nuke the profile');
+  assert.equal(bad.diagnostics[0]!.level, 'ERROR');
+  assert.equal(bad.diagnostics[0]!.path.endsWith('arguments[0].source.dataType'), true);
+  assert.equal(bad.profile!.components[0]!.arguments.length, 0, 'the typed argument with a junk tag is dropped');
+  // Untyped constants stay valid.
+  const legacy = parseMappingProfile({
+    ...validProfileJson,
+    components: [{
+      source: { kind: 'component', componentName: 'Badge' },
+      target: { symbol: 'AppBadge' },
+      arguments: [{ argument: 'x', source: { kind: 'constant', value: '2' } }],
+    }],
+  });
+  assert.equal(legacy.diagnostics.length, 0);
+  assert.deepEqual(legacy.profile!.components[0]!.arguments[0]!.source, { kind: 'constant', value: '2' });
+});
+
 /* ----------------------------- resolution ----------------------------- */
 
 const profile: MappingProfile = (parseMappingProfile(validProfileJson).profile)!;

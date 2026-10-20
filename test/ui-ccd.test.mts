@@ -303,6 +303,44 @@ test('CCD visual editor: mapping + argument rows stay intact through apply', () 
   assert.deepEqual(writes[0]?.payload, { masterId: 'm3', config: mapped });
 });
 
+test('CCD visual editor: typed constant arguments carry their datatype', () => {
+  const { document, stubWindow, posted } = makeDomStub();
+  runUiScript(document, stubWindow, posted);
+  const mapped = blankConfig();
+  mapped.mapping = 'com.app.Y';
+  mapped.mappingArgs = [
+    { argument: 'count', source: { kind: 'constant', value: '2', dataType: 'int' } },
+    { argument: 'tint', source: { kind: 'color' } },
+  ];
+  postConfigs(stubWindow, [{ masterId: 'm14', masterName: 'Typed/A', hasConfig: true, config: mapped }]);
+  const host = document.getElementById('configHost') as El;
+  const rows = findAll(host, 'cc-argrow');
+  assert.equal(rows.length, 2, 'typed rows render like any other argument');
+  const selects = rows.map((row) => ((row.children ?? [])[1] ?? {}) as El & { value: string; onchange?: () => void });
+  assert.equal(selects[0]?.value, 'typed:int', 'the datatype renders as the selected entry');
+  assert.equal(selects[1]?.value, 'color', 'design sources stay bare');
+  const labels = (selects[0]?.children ?? []).map((o) => textOf(o));
+  assert.deepEqual(
+    labels,
+    ['constant', '@text', '@icon', '@color', '@content', '@modifier', 'int', 'long', 'float', 'double', 'boolean', 'string', 'char', 'dp', 'sp', 'color', 'object'],
+  );
+  // Switching the typed row to dp updates placeholder semantics and serialization.
+  selects[0]!.value = 'typed:dp';
+  selects[0]!.onchange?.();
+  const rows2 = findAll(host, 'cc-argrow');
+  const valueInput = ((rows2[0]!.children ?? [])[2] ?? {}) as El & { value: string; placeholder: string; oninput?: () => void };
+  assert.equal(valueInput.placeholder, '16', 'the dp placeholder guides a dp value');
+  valueInput.value = '16';
+  valueInput.oninput?.();
+  posted.length = 0;
+  const apply = findApply(host) as El & { onclick: () => void };
+  apply.onclick();
+  const writes = of(posted, 'set-component-config');
+  const config = (writes[0]?.payload as { config?: { mappingArgs?: { argument: string; source: Record<string, unknown> }[] } }).config;
+  assert.deepEqual(config?.mappingArgs?.[0], { argument: 'count', source: { kind: 'constant', value: '16', dataType: 'dp' } });
+  assert.deepEqual(config?.mappingArgs?.[1], { argument: 'tint', source: { kind: 'color' } });
+});
+
 test('CCD presets: save captures the shown values, list arrives via component-presets, load+apply writes it', () => {
   const { document, stubWindow, posted } = makeDomStub();
   runUiScript(document, stubWindow, posted);

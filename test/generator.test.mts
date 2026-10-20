@@ -881,3 +881,38 @@ test('the configuration mapping maps instances to an app composable without an a
   assert.match(screen, /title = "Home",/);
   assert.match(screen, /alpha = 0\.8,/);
 });
+
+test('typed mapping arguments render Kotlin literals (suffixes, units, colors, strings)', () => {
+  const root = frameNode('root', 'Root', { width: 300, height: 200 }, [
+    instanceNode('a1', 'Badge', { mainComponent: { name: 'Badge', id: 'comp:badge2' }, width: 60, height: 24 }, [
+      textNode('a1t', 'Label', { characters: 'Home' }),
+    ]),
+  ]);
+  const yaml = 'mapping: MyAppBadge\nmappingArgs: count=int:42, delay=long:5, opacity=float:0.5, ratio=double:0.5,'
+    + ' on=boolean:true, label=string:Signed, ch=char:a, pad=dp:16, size=sp:14, tint=color:80FF40, style=object:TextStyle.Default';
+  const result = run(root, null, { componentConfigs: { 'comp:badge2': ccd(yaml) } });
+  const screen = result.files.find((f) => f.path === 'RootScreen.kt')!.content;
+  assert.match(screen, /count = 42,/);
+  assert.match(screen, /delay = 5L,/);
+  assert.match(screen, /opacity = 0\.5f,/);
+  assert.match(screen, /ratio = 0\.5,/);
+  assert.match(screen, /on = true,/);
+  assert.match(screen, /label = "Signed",/);
+  assert.match(screen, /ch = 'a',/);
+  assert.match(screen, /pad = 16\.dp,/);
+  assert.match(screen, /size = 14\.sp,/);
+  assert.match(screen, /tint = Color\(0xFF80FF40\),/);
+  assert.match(screen, /style = TextStyle\.Default,/);
+  const imports = screen.split('\n').filter((l) => l.startsWith('import '));
+  assert.ok(imports.includes('import androidx.compose.ui.unit.dp'), 'dp arguments import the unit extension');
+  assert.ok(imports.includes('import androidx.compose.ui.unit.sp'), 'sp arguments import the unit extension');
+  assert.ok(imports.includes('import androidx.compose.ui.graphics.Color'), 'color arguments import Color');
+});
+
+test('the unit-import sweep fixes missing dp/sp imports for plain layout emission too', () => {
+  // columnFixture emits .dp/.sp literals but never wired the unit imports.
+  const result = run(columnFixture());
+  const imports = result.files[0]!.content.split('\n').filter((l) => l.startsWith('import '));
+  assert.ok(imports.includes('import androidx.compose.ui.unit.dp'));
+  assert.ok(imports.includes('import androidx.compose.ui.unit.sp'));
+});

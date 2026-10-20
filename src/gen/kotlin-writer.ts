@@ -60,6 +60,7 @@ export class KotlinFile {
   private readonly footers: string[] = [];
 
   render(): string {
+    this.sweepUnitImports();
     const importLines = [...this.imports]
       .filter((i) => !this.importsToRemove.has(i))
       .sort((a, b) => a.localeCompare(b, 'en'))
@@ -72,6 +73,27 @@ export class KotlinFile {
     parts.push(...this.lines);
     parts.push('');
     return parts.join('\n');
+  }
+
+  /**
+   * Registers the Compose unit extension imports (`16.dp` -> `unit.dp`,
+   * `24.sp` -> `unit.sp`) for any unit literals found in the body outside
+   * string literals or comments. Layout modifiers always need these, and
+   * generator wiring above may miss them when expressions reach the file
+   * through helpers; sweeping at render keeps emission deterministic and the
+   * imports minimal (a no-op when the file does not use Dp/Sp literals).
+   */
+  private sweepUnitImports(): void {
+    let dp = false;
+    let sp = false;
+    for (const line of this.lines) {
+      const stripped = line.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'.*?'/g, "''").replace(/\/\/.*$/, '');
+      if (!dp && /\.dp\b/.test(stripped)) dp = true;
+      if (!sp && /\.sp\b/.test(stripped)) sp = true;
+      if (dp && sp) break;
+    }
+    if (dp) this.useImport('androidx.compose.ui.unit.dp');
+    if (sp) this.useImport('androidx.compose.ui.unit.sp');
   }
 }
 
