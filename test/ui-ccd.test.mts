@@ -33,11 +33,20 @@ function makeStubElement(): El {
     placeholder: '',
     style: {},
     dataset: {},
+    parentElement: null,
     classList: { add: () => {}, remove: () => {}, toggle: () => {} },
     appendChild(child: El): El {
       if (!Array.isArray(this.children)) this.children = [];
       this.children.push(child);
+      child.parentElement = this;
       return child;
+    },
+    replaceWith(next: El): void {
+      const parent = this.parentElement as El | null;
+      if (parent && Array.isArray(parent.children)) {
+        const at = parent.children.indexOf(this);
+        if (at >= 0) parent.children[at] = next;
+      }
     },
     querySelectorAll(): El[] {
       return [];
@@ -185,6 +194,20 @@ const firstText = (list: El[]): string => {
   const first = list[0];
   return first ? textOf(first) : '';
 };
+
+/** The control element (second child) of the cc-field whose label text includes `labelPart`. */
+function findFieldControl(root: El, labelPart: string): (El & { value: string; oninput?: () => void }) | undefined {
+  for (const field of findAll(root, 'cc-field')) {
+    const kids = Array.isArray(field.children) ? field.children : [];
+    const label = kids[0];
+    const span = label && Array.isArray(label.children) ? label.children[0] : undefined;
+    if (span && textOf(span).includes(labelPart)) {
+      const control = kids[1];
+      return control ? (control as El & { value: string; oninput?: () => void }) : undefined;
+    }
+  }
+  return undefined;
+}
 
 function findApply(host: El): (El & { onclick: () => void }) | undefined {
   const candidates = findAll(host, 'config-actions').flatMap((row) => (Array.isArray(row.children) ? row.children : []));
@@ -377,4 +400,65 @@ test('CCD presets: the preset bar Save current… button reveals the name form t
     config: { role: 'icon', kind: null, assets: 'auto', implementation: 'auto', mapping: null, note: null, mappingArgs: [] },
   });
   assert.equal(saveRow.style.display, 'none', 'the form closes after a save');
+});
+
+test('Plugin UI drops the redundant close button (Figma draws its own)', () => {
+  const uiDir = join(dirname(fileURLToPath(import.meta.url)), '../src/ui');
+  const html = readFileSync(join(uiDir, 'ui.html'), 'utf8');
+  assert.ok(!html.includes('closeBtn'), 'no close button markup or wiring in the UI');
+  const main = readFileSync(join(uiDir, '../main.ts'), 'utf8');
+  assert.ok(!main.includes('close-plugin'), 'the plugin handler for the removed button is gone too');
+  assert.ok(html.includes('data-tab="settings"'), 'the Settings tab is still wired in the markup');
+});
+
+test('CCD visual editor: argument rows are reachable only through a resolved mapping', () => {
+  const { document, stubWindow, posted } = makeDomStub();
+  runUiScript(document, stubWindow, posted);
+  const card = blankConfig();
+  card.role = 'button';
+  postConfigs(stubWindow, [{ masterId: 'm7', masterName: 'Btn/G', hasConfig: true, config: card }]);
+  const host = document.getElementById('configHost') as El;
+  assert.equal(findAll(host, 'cc-argrow').length, 0, 'no rows without a mapping');
+  assert.ok(
+    !findAll(host, 'secondary').some((b) => textOf(b) === '+ Add argument'),
+    'no add-argument button without a mapping (it used to appear dead and corrupt args state)',
+  );
+
+  // Typing a mapping is the gate; then the add button appears and works.
+  const mappingInput = findFieldControl(host, 'Mapping (app composable)');
+  assert.ok(mappingInput, 'the mapping control exists');
+  if (mappingInput) {
+    mappingInput.value = 'My.Button';
+    mappingInput.oninput?.();
+    const add = findAll(host, 'secondary').find((b) => textOf(b) === '+ Add argument');
+    assert.ok(add, 'the add button appears once a mapping is set');
+    (add as El & { onclick: () => void }).onclick();
+    assert.equal(findAll(host, 'cc-argrow').length, 1, 'clicking add renders an editable row');
+
+    // A row left unnamed contributes nothing on Apply (no corrupt empty args).
+    posted.length = 0;
+    const apply = findApply(host) as El & { onclick: () => void };
+    apply.onclick();
+    const writes = of(posted, 'set-component-config');
+    const written = (writes[0]?.payload as { config?: { mappingArgs?: unknown[]; mapping?: string } } | undefined)?.config;
+    assert.ok(written, 'apply posted');
+    assert.equal(written?.mappingArgs?.length, 0, 'unnamed rows are dropped from the payload');
+    assert.equal(written?.mapping, 'My.Button');
+  }
+});
+
+test('CCD presets: saving an all-defaults snapshot is refused', () => {
+  const { document, stubWindow, posted } = makeDomStub();
+  runUiScript(document, stubWindow, posted);
+  postConfigs(stubWindow, [{ masterId: 'm8', masterName: 'E/H', hasConfig: false, config: null }]);
+  const barBtn = document.getElementById('presetSaveBtn') as El & { onclick: () => void };
+  barBtn.onclick();
+  const okButton = document.getElementById('presetSaveOk') as El & { onclick: () => void };
+  posted.length = 0;
+  okButton.onclick();
+  assert.equal(
+    of(posted, 'save-component-preset').length,
+    0,
+    'no save message for an all-defaults editor (the form stays open)',
+  );
 });

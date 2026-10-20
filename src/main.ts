@@ -1850,9 +1850,6 @@ figma.ui.onmessage = async (raw: unknown): Promise<void> => {
       case 'delete-component-preset':
         await deleteComponentPreset(message.payload);
         break;
-      case 'close-plugin':
-        figma.closePlugin();
-        break;
       default:
         break;
     }

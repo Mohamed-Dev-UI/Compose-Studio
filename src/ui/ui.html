@@ -79,14 +79,14 @@
 
   /* ------------------------------ tabs ------------------------------ */
   .tabbar {
-    display: flex; gap: 2px; padding: 5px 8px 0;
+    display: flex; flex-wrap: wrap; gap: 0 2px; padding: 5px 8px 0;
     background: var(--bg); border-bottom: 1px solid var(--border);
     flex: none; position: relative;
   }
   .tab {
     appearance: none; background: none; border: none; cursor: pointer;
     font: inherit; font-weight: 500; color: var(--text2);
-    padding: 7px 9px 9px; border-radius: 7px 7px 0 0;
+    padding: 6px 8px 8px; border-radius: 7px 7px 0 0;
     display: inline-flex; align-items: center; gap: 5px;
     position: relative; transition: color 0.15s, background 0.15s;
     white-space: nowrap;
@@ -110,6 +110,12 @@
   }
   @keyframes badgepop { 0% { transform: scale(0.5); } 60% { transform: scale(1.18); } 100% { transform: scale(1); } }
   .tab-badge.pulse { animation: badgepop 0.35s ease; }
+  /* Figma panels start around 520px wide and can go narrower — drop the
+     decorative tab icons below 600px so all 7 labels fit on one row. */
+  @media (max-width: 599px) {
+    .tab svg { display: none; }
+    .tab { padding: 6px 7px 8px; }
+  }
 
   /* ------------------------------ main ------------------------------ */
   main {
@@ -539,9 +545,6 @@
       <h1>Compose Studio</h1>
       <span class="brand-sub">Figma selection → Jetpack Compose</span>
     </div>
-    <button class="icon-btn" id="closeBtn" title="Close the plugin">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" width="13" height="13"><path d="M6 6l12 12M18 6L6 18"/></svg>
-    </button>
   </header>
 
   <nav class="tabbar" id="tabbar" role="tablist">
@@ -1780,6 +1783,7 @@ const CC_ARG_SOURCES = ['text', 'icon', 'color', 'content', 'modifier'];
 let ccPayload = null; // last 'component-configs' payload
 let ccPresets = []; // saved presets (kept current by payload / 'component-presets')
 let ccEditor = null; // shared editor state { multi, role/kind/assets/implementation/mapping/note states, args rows }
+let ccArgsField = null; // the rendered Mapping-arguments field node (for focus-safe refreshes)
 
 function sendComponentConfig(payload) {
   parent.postMessage({ pluginMessage: { type: 'set-component-config', payload } }, '*');
@@ -1866,6 +1870,14 @@ function ccTouch(key, value) {
   renderComponentEditorBody();
 }
 
+/** Rebuilds only the Mapping-arguments field (mapping state changed while typing). */
+function ccRefreshArgsField() {
+  if (!ccArgsField || !ccEditor) return;
+  const old = ccArgsField;
+  const next = ccFieldArgs(); // also re-registers ccArgsField
+  if (typeof old.replaceWith === 'function') old.replaceWith(next);
+}
+
 /** The per-master config snapshot this Apply will write (untouched keys keep their own). */
 function ccConfigForMaster(master) {
   const base = master && master.config ? master.config : CC_DEFAULT_CONFIG;
@@ -1881,10 +1893,12 @@ function ccConfigForMaster(master) {
     mapping: own('mapping', base.mapping ?? null),
     note: own('note', base.note ?? null),
     mappingArgs: ccEditor.args.touched && !ccEditor.args.mixed
-      ? ccEditor.args.rows.map((row) => ({
-          argument: row.argument,
-          source: row.sourceKind === 'constant' ? { kind: 'constant', value: row.value } : { kind: row.sourceKind },
-        }))
+      ? ccEditor.args.rows
+          .filter((row) => String(row.argument || '').trim() !== '')
+          .map((row) => ({
+            argument: row.argument,
+            source: row.sourceKind === 'constant' ? { kind: 'constant', value: row.value } : { kind: row.sourceKind },
+          }))
       : (base.mappingArgs || []),
   };
 }
@@ -2103,10 +2117,14 @@ function ccFieldMapping() {
   } else input.value = ccEditor.mapping.value || '';
   input.oninput = () => {
     if (!ccEditor) return;
+    const hadMapping = !!ccDisplayValue('mapping');
     ccEditor.mapping.mixed = false;
     ccEditor.mapping.values = [];
     ccEditor.mapping.value = input.value;
     ccEditor.mapping.touched = true;
+    // The argument rows live or die with the mapping; swap just that field
+    // so the add-argument path appears the moment a mapping is typed.
+    if (hadMapping !== !!input.value) ccRefreshArgsField();
   };
   return ccField('Mapping (app composable)', input, 'mapping');
 }
@@ -2123,7 +2141,7 @@ function ccFieldArgs() {
   if (ccEditor.args.mixed && mappingActive) {
     const mixedNote = document.createElement('p');
     mixedNote.className = 'cc-argsummary';
-    mixedNote.textContent = 'Components carry different arguments (' + ccEditor.args.values.map((v) => (v.length > 30 ? v.slice(0, 30) + '…' : v)).join(' | ') + '). Edit the rows below to override them on all; leave them untouched to keep each.';
+    mixedNote.textContent = 'Components carry different arguments (' + ccEditor.args.values.map((v) => (v.length > 30 ? v.slice(0, 30) + '…' : v)).join(' | ') + '). Adding a row starts overriding them on all; leave it untouched to keep each component\'s own.';
     wrap.appendChild(mixedNote);
   }
   if (!mappingActive) {
@@ -2134,16 +2152,25 @@ function ccFieldArgs() {
   }
   const rows = mappingActive && !ccEditor.args.mixed ? ccEditor.args.rows : [];
   for (const row of rows) ccArgRow(wrap, row);
-  const add = document.createElement('button');
-  add.type = 'button';
-  add.className = 'secondary';
-  add.textContent = '+ Add argument';
-  add.onclick = () => {
-    ccEditor.args.rows.push({ argument: '', sourceKind: 'constant', value: '' });
-    ccTouchArgs();
-  };
-  wrap.appendChild(add);
-  return ccField('Mapping arguments', wrap, 'args');
+  // Without a resolved mapping there is nothing to attach arguments to —
+  // the button previously appeared anyway and silently touched the args
+  // state with an empty row (invisible in the editor, corrupt on Apply).
+  if (mappingActive) {
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'secondary';
+    add.textContent = '+ Add argument';
+    add.onclick = () => {
+      ccEditor.args.rows.push({ argument: '', sourceKind: 'constant', value: '' });
+      ccTouchArgs();
+    };
+    wrap.appendChild(add);
+  }
+  // Register the built field so the mapping input can swap just this field
+  // (never the whole editor) when the mapping appears/disappears on typing.
+  const field = ccField('Mapping arguments', wrap, 'args');
+  ccArgsField = field;
+  return field;
 
   function ccTouchArgs() {
     ccEditor.args.mixed = false;
@@ -2463,10 +2490,12 @@ function currentPresetConfig() {
     mapping: own('mapping', base.mapping ?? null),
     note: own('note', base.note ?? null),
     mappingArgs: ccEditor.args.touched && !ccEditor.args.mixed
-      ? ccEditor.args.rows.map((row) => ({
-          argument: row.argument,
-          source: row.sourceKind === 'constant' ? { kind: 'constant', value: row.value } : { kind: row.sourceKind },
-        }))
+      ? ccEditor.args.rows
+          .filter((row) => String(row.argument || '').trim() !== '')
+          .map((row) => ({
+            argument: row.argument,
+            source: row.sourceKind === 'constant' ? { kind: 'constant', value: row.value } : { kind: row.sourceKind },
+          }))
       : (base.mappingArgs || []),
   };
 }
@@ -2493,7 +2522,12 @@ function wirePresetSaveForm() {
       input.focus();
       return;
     }
-    sendPresetMessage('save-component-preset', { name, config: currentPresetConfig() });
+    const snapshot = currentPresetConfig();
+    if (ccIsDefault(snapshot)) {
+      setStatus('Nothing to save yet — a preset stores one of the values Apply would write.', true);
+      return;
+    }
+    sendPresetMessage('save-component-preset', { name, config: snapshot });
     setStatus('Saving preset "' + name + '"…', false);
     $('presetSaveRow').style.display = 'none';
     ok.style.display = 'none';
@@ -3502,7 +3536,10 @@ $('importProfileInput').onchange = (e) => {
   if (e.target.files && e.target.files[0]) importProfileJson(e.target.files[0]);
   e.target.value = '';
 };
-$('closeBtn').onclick = () => { parent.postMessage({ pluginMessage: { type: 'close-plugin' } }, '*'); };
+$('importProfileInput').onchange = (e) => {
+  if (e.target.files && e.target.files[0]) importProfileJson(e.target.files[0]);
+  e.target.value = '';
+};
 $('refreshBtn').onclick = () => {
   setStatus('Checking selection…');
   parent.postMessage({ pluginMessage: { type: 'inspect-selection' } }, '*');
