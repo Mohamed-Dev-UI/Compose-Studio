@@ -152,6 +152,10 @@ type MasterFixture = {
   issues?: string[];
   /** The payload's derived app-composable suggestion (null in the real flow for blank names). */
   suggestedMapping?: string;
+  /** Variant-set identity: present when the master is a variant of a component set. */
+  setId?: string;
+  setName?: string;
+  variantProps?: Record<string, string>;
 };
 
 function postConfigs(stubWindow: El, masters: MasterFixture[], presets: unknown[] = []): void {
@@ -170,6 +174,9 @@ function postConfigs(stubWindow: El, masters: MasterFixture[], presets: unknown[
       blockText: null,
       issues: master.issues ?? [],
       suggestedMapping: master.suggestedMapping ?? null,
+      setId: master.setId ?? null,
+      setName: master.setName ?? null,
+      variantProps: master.variantProps ?? null,
       config: master.config ? { ...master.config, tag: 'compose-studio', version: 1 } : null,
     })),
   };
@@ -619,4 +626,138 @@ test('CCD preset bar: built-in starters are marked, not deletable, and user pres
   select.value = '';
   select.onchange?.();
   assert.equal(del.disabled, true, 'deselecting gates the button again');
+});
+
+/* --------------------- variant-set grouping --------------------- */
+
+const variantMasters = (): MasterFixture[] => [
+  { masterId: 'v1', masterName: 'Notif=On', hasConfig: false, config: null, setId: 'set1', setName: 'Notif', variantProps: { Notif: 'On' } },
+  { masterId: 'v2', masterName: 'Notif=Off', hasConfig: false, config: null, setId: 'set1', setName: 'Notif', variantProps: { Notif: 'Off' } },
+];
+
+/** Posts a settings snapshot to the UI (the strip control's persistence path). */
+function postSettings(stubWindow: El, componentSetBehavior: string): void {
+  const onmessage = stubWindow.onmessage as (event: unknown) => void;
+  onmessage({ data: { pluginMessage: { type: 'settings', payload: { componentSetBehavior } } } });
+}
+
+test('CCD variant groups: the strip default treats a multi-variant set as one component', () => {
+  const { document, stubWindow } = makeDomStub();
+  runUiScript(document, stubWindow, []);
+  postConfigs(stubWindow, variantMasters());
+  const host = document.getElementById('configHost') as El;
+  assert.equal(textOf(document.getElementById('configCount') as El), '1', 'the badge counts one logical component');
+  assert.ok(firstText(findAll(host, 'config-name')).includes('Notif'), 'the editor is titled after the component set');
+  assert.ok(
+    findAll(host, 'config-summary').some((r) => textOf(r).includes('variants as one component')),
+    'a group header explains the merged presentation',
+  );
+});
+
+test('CCD variant groups: the merged component writes the configuration into every variant', () => {
+  const { document, stubWindow, posted } = makeDomStub();
+  runUiScript(document, stubWindow, posted);
+  postConfigs(stubWindow, variantMasters());
+  const host = document.getElementById('configHost') as El;
+  const apply = findApply(host) as El & { onclick: () => void };
+  assert.ok(apply, 'an Apply button exists');
+  assert.equal(textOf(apply), 'Apply', 'one logical component needs no count label');
+  // Untouched defaults-only masters are not written; resolving a shared value is.
+  const kindSeg = findAll(host, 'segmented')[0] as El;
+  const iconBtn = (Array.isArray(kindSeg.children) ? kindSeg.children : [])
+    .find((button) => textOf(button) === 'icon') as El & { onclick: () => void };
+  assert.ok(iconBtn, 'the merged editor still offers the kind control');
+  iconBtn.onclick();
+  posted.length = 0;
+  const apply2 = findApply(host) as El & { onclick: () => void };
+  apply2.onclick();
+  const writes = of(posted, 'set-component-config');
+  assert.deepEqual(
+    writes.map((m) => (m.payload as { masterId: string }).masterId).sort(),
+    ['v1', 'v2'],
+    'the merged component writes the configuration into every variant',
+  );
+});
+
+test('CCD variant groups: frame-of-components keeps every variant master separate', () => {
+  const { document, stubWindow, posted } = makeDomStub();
+  runUiScript(document, stubWindow, posted);
+  postSettings(stubWindow, 'frame-of-components');
+  postConfigs(stubWindow, variantMasters());
+  const host = document.getElementById('configHost') as El;
+  assert.equal(textOf(document.getElementById('configCount') as El), '2', 'the variants stay separate components');
+  assert.ok(firstText(findAll(host, 'config-name')).includes('Shared editor'), 'the shared-editor presentation stays');
+  const apply = findApply(host) as El & { onclick: () => void };
+  assert.ok(textOf(apply).startsWith('Apply to 2'), 'the count label lists the separate components');
+  // Untouched defaults-only masters are not written; resolving a shared value is.
+  posted.length = 0;
+  const kindSeg = findAll(host, 'segmented')[0] as El;
+  const iconBtn = (Array.isArray(kindSeg.children) ? kindSeg.children : [])
+    .find((button) => textOf(button) === 'icon') as El & { onclick: () => void };
+  assert.ok(iconBtn, 'the kind segmented control offers icon');
+  iconBtn.onclick();
+  const apply2 = findApply(host) as El & { onclick: () => void };
+  assert.ok(apply2, 'apply still present after re-render');
+  apply2.onclick();
+  assert.equal(of(posted, 'set-component-config').length, 2, 'both variants are written as before');
+});
+
+test('CCD variant groups: component merges, frame modes never do', () => {
+  const { document, stubWindow } = makeDomStub();
+  runUiScript(document, stubWindow, []);
+  postSettings(stubWindow, 'component');
+  postConfigs(stubWindow, variantMasters());
+  assert.equal(textOf(document.getElementById('configCount') as El), '1', 'the set is one logical component in component mode');
+  assert.ok(firstText(findAll(document.getElementById('configHost') as El, 'config-name')).includes('Notif'), 'the editor is titled after the set');
+
+  for (const behavior of ['frame', 'frame-of-components']) {
+    const next = makeDomStub();
+    runUiScript(next.document, next.stubWindow, []);
+    postSettings(next.stubWindow, behavior);
+    postConfigs(next.stubWindow, variantMasters());
+    assert.equal(
+      textOf(next.document.getElementById('configCount') as El),
+      '2',
+      `the variants stay separate components in ${behavior} mode`,
+    );
+  }
+});
+
+test('The shared component-set strip shows while the selection holds a component set', () => {
+  const { document, stubWindow } = makeDomStub();
+  runUiScript(document, stubWindow, []);
+  const onmessage = stubWindow.onmessage as (event: unknown) => void;
+  const strip = document.getElementById('setBehaviorStrip') as El & { hidden: boolean };
+  onmessage({ data: { pluginMessage: { type: 'inspection', payload: { selectedNodes: [] } } } });
+  assert.equal(strip.hidden, true, 'no strip without a component set in the selection');
+  onmessage({
+    data: {
+      pluginMessage: {
+        type: 'inspection',
+        payload: { selectedNodes: [{ id: 's1', name: 'Button', kind: 'COMPONENT_SET', convertable: true }] },
+      },
+    },
+  });
+  assert.equal(strip.hidden, false, 'the strip appears for a component-set selection');
+  onmessage({
+    data: {
+      pluginMessage: {
+        type: 'inspection',
+        payload: { selectedNodes: [{ id: 'f1', name: 'Home', kind: 'FRAME', convertable: true }] },
+      },
+    },
+  });
+  assert.equal(strip.hidden, true, 'the strip hides again for plain frames');
+});
+
+test('Plugin UI orders Guide between Output and Settings', () => {
+  const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/ui/ui.html'), 'utf8');
+  const at = (name: string) => html.indexOf(`data-tab="${name}"`);
+  for (const tab of ['convert', 'mappings', 'config', 'assets', 'output', 'guide', 'settings']) {
+    assert.ok(at(tab) >= 0, `the ${tab} tab exists`);
+  }
+  assert.ok(at('config') < at('assets'), 'Config sits before Assets & Ignore');
+  assert.ok(at('assets') < at('output'), 'Assets & Ignore sits before Output');
+  assert.ok(at('output') < at('guide'), 'Guide moved between Output and Settings');
+  assert.ok(at('guide') < at('settings'), 'Guide sits right before Settings');
 });

@@ -19,6 +19,7 @@ import { Extractor } from './extract/extract.ts';
 import { generateCode } from './gen/generate.ts';
 import { buildIconsFile } from './gen/imagevector.ts';
 import type { IrDocument, IrInstanceNode, IrNode } from './ir/ir.ts';
+import { applyComponentSetBehavior, parseVariantProps } from './ir/set-roots.ts';
 import { sniffImageExt } from './util/images.ts';
 import type {
   ColorMapping,
@@ -94,6 +95,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
   dsStructure: 'object',
   dsUsage: false,
   dsUsageMin: 2,
+  componentSetBehavior: 'component',
 };
 
 const SETTINGS_KEY = 'compose-studio-settings';
@@ -144,6 +146,16 @@ async function loadSettings(): Promise<PluginSettings> {
       if (!['off', 'variables', 'styles', 'both'].includes(merged.dsSource)) merged.dsSource = 'off';
       if (!['object', 'material', 'material-theme'].includes(merged.dsStructure)) merged.dsStructure = 'object';
       if (typeof merged.dsUsage !== 'boolean') merged.dsUsage = false;
+      if (!['component', 'frame', 'frame-of-components'].includes(merged.componentSetBehavior)) {
+        merged.componentSetBehavior = 'component';
+      }
+      // Migration: the retired Config-tab `variantGroupBehavior` maps onto the
+      // shared strip (merge -> component, separate -> frame-of-components,
+      // ask -> the new default).
+      const legacyGroup = (raw as { variantGroupBehavior?: unknown }).variantGroupBehavior;
+      if (raw.componentSetBehavior === undefined && typeof legacyGroup === 'string') {
+        merged.componentSetBehavior = legacyGroup === 'separate' ? 'frame-of-components' : 'component';
+      }
       const min = typeof merged.dsUsageMin === 'number' && Number.isFinite(merged.dsUsageMin) ? Math.round(merged.dsUsageMin) : 2;
       merged.dsUsageMin = Math.min(99, Math.max(2, min));
       return merged;
@@ -699,7 +711,13 @@ function selectionComponentCandidates(): { id: string; names: string[] }[] {
 }
 
 /** Builds one UI record for a master component description. */
-function componentConfigInfo(masterId: string, masterName: string, nodeNames: string[], description: unknown): ComponentConfigInfo {
+function componentConfigInfo(
+  masterId: string,
+  masterName: string,
+  nodeNames: string[],
+  description: unknown,
+  variant: { setId: string | null; setName: string | null; variantProps: Record<string, string> | null },
+): ComponentConfigInfo {
   let prose = '';
   let blockText: string | null = null;
   let config: ParsedComponentConfig | null = null;
@@ -720,13 +738,34 @@ function componentConfigInfo(masterId: string, masterName: string, nodeNames: st
   } catch {
     issues = ['the component description could not be read'];
   }
-  return { masterId, masterName, nodeNames, hasConfig: blockText !== null, summary, prose, blockText, config, issues, suggestedMapping: suggestMappingName(masterName) };
+  return {
+    masterId,
+    masterName,
+    nodeNames,
+    hasConfig: blockText !== null,
+    summary,
+    prose,
+    blockText,
+    config,
+    issues,
+    suggestedMapping: suggestMappingName(masterName),
+    setId: variant.setId,
+    setName: variant.setName,
+    variantProps: variant.variantProps,
+  };
 }
 
 /** Resolves the selection to master components and posts the editor payload. */
 async function postComponentConfigs(): Promise<void> {
   const candidates = selectionComponentCandidates();
-  const masters = new Map<string, { name: string; description: unknown; nodeNames: string[] }>();
+  const masters = new Map<string, {
+    name: string;
+    description: unknown;
+    nodeNames: string[];
+    setId: string | null;
+    setName: string | null;
+    variantProps: Record<string, string> | null;
+  }>();
   await Promise.all(candidates.map(async (candidate) => {
     let node: unknown = null;
     try {
@@ -744,11 +783,38 @@ async function postComponentConfigs(): Promise<void> {
       }
     }
     if (!node || (node as { type?: string }).type !== 'COMPONENT') return;
+    // Variant grouping for the Config tab: a master inside a COMPONENT_SET is
+    // a variant; its assignments come from `variantProperties` (name-derived,
+    // sync-safe on the loaded node) with the `Key=Value` name as fallback.
+    let setId: string | null = null;
+    let setName: string | null = null;
+    let variantProps: Record<string, string> | null = null;
+    try {
+      const parent = (node as unknown as { parent?: { type?: string; id?: string; name?: string } }).parent;
+      if (parent && parent.type === 'COMPONENT_SET' && typeof parent.id === 'string' && typeof parent.name === 'string') {
+        setId = parent.id;
+        setName = parent.name;
+      }
+    } catch {
+      // Relational reads degrade per field (dynamic-page safety).
+    }
+    try {
+      const props = (node as unknown as { variantProperties?: Record<string, string> | null }).variantProperties;
+      if (props && typeof props === 'object' && Object.keys(props).length > 0) variantProps = { ...props };
+    } catch {
+      // Property reads degrade per field.
+    }
+    if (!variantProps && setName !== null) {
+      variantProps = parseVariantProps((node as { name: string }).name);
+    }
     const masterId = (node as { id: string }).id;
     const entry = masters.get(masterId) ?? {
       name: (node as { name: string }).name,
       description: (node as { description?: unknown }).description,
       nodeNames: [],
+      setId,
+      setName,
+      variantProps,
     };
     entry.nodeNames.push(...candidate.names);
     masters.set(masterId, entry);
@@ -758,7 +824,11 @@ async function postComponentConfigs(): Promise<void> {
     template: COMPOSE_CONFIG_TEMPLATE,
     presets: mergedComponentPresets(),
     masters: [...masters.entries()].map(([masterId, entry]) =>
-      componentConfigInfo(masterId, entry.name, entry.nodeNames, entry.description)),
+      componentConfigInfo(masterId, entry.name, entry.nodeNames, entry.description, {
+        setId: entry.setId,
+        setName: entry.setName,
+        variantProps: entry.variantProps,
+      })),
   };
   postMessage({ type: 'component-configs', payload });
 }
@@ -1164,25 +1234,6 @@ async function resolveInstanceComponents(
 }
 
 /**
- * Parses a variant master's name ("Primary=Default, Size=Large") into its
- * variant property assignments. Returns null when the name carries no
- * assignments (plain component names, empty strings).
- */
-function parseVariantProps(name: string): Record<string, string> | null {
-  const parts = String(name).split(',');
-  const props: Record<string, string> = {};
-  for (const raw of parts) {
-    const eq = raw.indexOf('=');
-    if (eq <= 0) return props && Object.keys(props).length > 0 ? props : null;
-    const key = raw.slice(0, eq).trim();
-    const value = raw.slice(eq + 1).trim();
-    if (!key || !value) return Object.keys(props).length > 0 ? props : null;
-    props[key] = value;
-  }
-  return Object.keys(props).length > 0 ? props : null;
-}
-
-/**
  * Expands every component-set family in the conversion to its full master
  * list: variant masters that the selection never instantiates are extracted
  * into "virtual instance" IR nodes (component-props-less, variant props
@@ -1197,8 +1248,12 @@ async function expandComponentMasters(
   context: FigmaContext,
   diagnostics: DiagnosticPayload[],
   configs: Map<string, ParsedComponentConfig>,
+  coveredExtra?: Map<string, Set<string>>,
 ): Promise<IrInstanceNode[]> {
   const covered = new Map<string, Set<string>>();
+  if (coveredExtra) {
+    for (const [setId, masters] of coveredExtra) covered.set(setId, new Set(masters));
+  }
   const visit = (node: IrNode): void => {
     if (node.type === 'instance') {
       const setId = node.componentSet?.id ?? null;
@@ -1614,7 +1669,12 @@ function readTextStyle(input: DesignSystemInput, style: TextStyle): void {
   });
 }
 
-async function convert(payload: { mode: 'standalone' | 'existing-design-system' }): Promise<void> {
+const COMPONENT_SET_BEHAVIORS = ['component', 'frame', 'frame-of-components'] as const;
+
+async function convert(payload: {
+  mode: 'standalone' | 'existing-design-system';
+  componentSetBehavior?: string;
+}): Promise<void> {
   const selection = figma.currentPage.selection;
   if (selection.length === 0) {
     notify('Nothing selected. Select a frame to convert.', true);
@@ -1622,6 +1682,12 @@ async function convert(payload: { mode: 'standalone' | 'existing-design-system' 
   }
 
   settings = await loadSettings();
+  // The strip control's value at click time wins; the persisted setting is
+  // the fallback (stale payloads from older UI builds, direct API calls).
+  const behavior = payload.componentSetBehavior
+    && (COMPONENT_SET_BEHAVIORS as readonly string[]).includes(payload.componentSetBehavior)
+    ? payload.componentSetBehavior as (typeof COMPONENT_SET_BEHAVIORS)[number]
+    : settings.componentSetBehavior;
   const table = await ensureTokens();
 
   // Dynamic-page manifest access forbids the sync `mainComponent` getter;
@@ -1651,7 +1717,43 @@ async function convert(payload: { mode: 'standalone' | 'existing-design-system' 
     const doc = new Extractor(context).extractRoot(node as unknown as FigmaSceneNode);
     if (doc) docs.push(doc);
   }
-  if (docs.length === 0) {
+
+  // Component-set roots follow the shared strip choice before anything else
+  // consumes the documents: `component` detaches the variant masters as the
+  // component's body, `frame-of-components` swaps them for self-referencing
+  // instance call sites, `frame` keeps the set canvas as-is.
+  const setReshape = applyComponentSetBehavior(docs, behavior);
+  docs.length = 0;
+  docs.push(...setReshape.docs);
+
+  // Detached and in-doc reshaped variant masters carry their own
+  // descriptions: parse their CCD blocks so per-master configurations apply.
+  for (const setNode of selection) {
+    if ((setNode as { type?: string }).type !== 'COMPONENT_SET') continue;
+    const application = setReshape.applied.find((a) => a.setId === (setNode as { id: string }).id);
+    if (!application) continue;
+    for (const raw of ((setNode as unknown as { children?: readonly unknown[] }).children ?? []) as unknown[]) {
+      const master = raw as { id?: unknown; type?: unknown; description?: unknown; name?: unknown };
+      if (typeof master.id !== 'string' || master.type !== 'COMPONENT') continue;
+      if (!application.masterIds.includes(master.id)) continue;
+      try {
+        const parsed = parseComposeConfig(typeof master.description === 'string' ? master.description : '');
+        if (parsed.issues.length > 0) {
+          masterDiagnostics.push({
+            level: 'warning',
+            message: `[COMPONENT-CONFIG-INVALID] Component '${String(master.name)}': ${parsed.issues.join(' ')} (fix the block in the component description).`,
+            nodeName: String(master.name),
+            nodeKind: 'COMPONENT',
+          });
+        }
+        if (parsed.config) componentConfigs.set(master.id, parsed.config);
+      } catch {
+        // Description reads degrade gracefully.
+      }
+    }
+  }
+
+  if (docs.length === 0 && setReshape.detached.length === 0) {
     notify(
       ignoredRoots > 0
         ? 'Every selected node matches an ignore rule (name prefix or marked), so nothing was converted.'
@@ -1704,9 +1806,22 @@ async function convert(payload: { mode: 'standalone' | 'existing-design-system' 
   // Variant masters of every component set in the conversion expand the
   // grouping: each set's non-instantiated masters are extracted as virtual
   // instances so all variants are coded (async, best effort per master).
-  let variantMasters: IrInstanceNode[] = [];
+  // Detached masters from set roots ride in first; their sets are pre-marked
+  // covered so the expansion never harvests them twice.
+  for (const notice of setReshape.notices) {
+    masterDiagnostics.push({ level: notice.level, message: notice.message, nodeName: notice.nodeName, nodeKind: notice.nodeKind });
+  }
+  for (const d of setReshape.droppedDiagnostics) {
+    masterDiagnostics.push({
+      level: d.severity.toLowerCase() as 'error' | 'warning' | 'info',
+      message: `[${d.code}] ${d.reason}${d.source?.nodeName ? ` (in '${d.source.nodeName}')` : ''}`,
+      nodeName: d.source?.nodeName,
+      nodeKind: d.source?.fType,
+    });
+  }
+  const variantMasters: IrInstanceNode[] = [...setReshape.detached];
   try {
-    variantMasters = await expandComponentMasters(docs, setNames, context, masterDiagnostics, componentConfigs);
+    variantMasters.push(...await expandComponentMasters(docs, setNames, context, masterDiagnostics, componentConfigs, setReshape.coverage));
   } catch (e) {
     masterDiagnostics.push({
       level: 'warning',

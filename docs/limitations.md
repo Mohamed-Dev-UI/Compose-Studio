@@ -63,7 +63,11 @@ Component configuration descriptions (CCD) carry their own boundaries:
   set share one group composable, so conflicting blocks across variants warn
   (`COMPONENT-CONFIG-CONFLICT`) and the first configured master wins.
 - Component *sets* are not edited in the Config tab's visual editor — select
-  a variant master or the master component. The editor writes the master's
+  a variant master or the master component. When the shared strip's
+  *Component with variants* treatment groups the set, Apply writes every
+  variant's description; the frame treatments keep the masters separate. The
+  set object's own description is never written.
+  The editor writes the master's
   description through the API; Figma shows edited descriptions only after a
   re-publish (the generated output uses the new value immediately).
 - The visual editor rewrites the block from parsed values, so comments inside

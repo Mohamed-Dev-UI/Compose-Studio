@@ -7,9 +7,9 @@
   src/shared/messages.ts. ZIP export is a small dependency-free "store"
   (uncompressed) ZIP writer below.
 
-  Layout: five tabs (Convert / Mappings / Assets & Ignore / Output / Settings)
-  driven by [data-tab] buttons; panels are #page-<name>. The bottom bar
-  (selection re-check + last run) is always visible.
+  Layout: seven tabs (Convert / Mappings / Config / Assets & Ignore / Output /
+  Guide / Settings) driven by [data-tab] buttons; panels are #page-<name>. The
+  bottom bar (selection re-check + last run) is always visible.
 -->
 <html>
 <head>
@@ -93,6 +93,19 @@
     background: var(--bg); border-bottom: 1px solid var(--border);
     flex: none; position: relative;
   }
+  /* Shared selection-behavior strip (component sets), shown on every tab. */
+  .setstrip {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 7px 12px; flex: none;
+    background: var(--bg2, var(--bg)); border-bottom: 1px solid var(--border);
+  }
+  .setstrip[hidden] { display: none; }
+  .setstrip-label {
+    font-size: 11px; font-weight: 600; color: var(--text2);
+    display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  }
+  .setstrip .segmented { flex: none; }
+  .setstrip-hint { flex: 1 1 140px; min-width: 0; margin: 0; }
   .tab {
     appearance: none; background: none; border: none; cursor: pointer;
     font: inherit; font-weight: 500; color: var(--text2);
@@ -587,7 +600,7 @@
     </div>
     <div class="brand-text">
       <h1>Compose Studio</h1>
-      <span class="brand-sub">Figma selection → Jetpack Compose · <span id="buildTag">rev. 35</span></span>
+      <span class="brand-sub">Figma selection → Jetpack Compose · <span id="buildTag">rev. 36</span></span>
     </div>
   </header>
 
@@ -605,10 +618,6 @@
       Config
       <span class="tab-badge" id="configBadge" hidden></span>
     </button>
-    <button class="tab" data-tab="guide" title="How component configuration descriptions work">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 6.5C10.5 5 8.3 4.5 5.5 4.7v13.6c2.8-.2 5 .3 6.5 1.7 1.5-1.4 3.7-1.9 6.5-1.7V4.7c-2.8-.2-5 .3-6.5 1.8z"/><path d="M12 6.5V20"/></svg>
-      Guide
-    </button>
     <button class="tab" data-tab="assets" title="Asset prefixes, ignore rules, asset pages">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 4 7.2v9.6L12 21l8-4.2V7.2L12 3z"/><path d="M4 7.2 12 11.4l8-4.2M12 11.4V21"/></svg>
       Assets &amp; Ignore
@@ -618,11 +627,32 @@
       Output
       <span class="tab-badge" id="outputBadge" hidden></span>
     </button>
+    <button class="tab" data-tab="guide" title="How component configuration descriptions work">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 6.5C10.5 5 8.3 4.5 5.5 4.7v13.6c2.8-.2 5 .3 6.5 1.7 1.5-1.4 3.7-1.9 6.5-1.7V4.7c-2.8-.2-5 .3-6.5 1.8z"/><path d="M12 6.5V20"/></svg>
+      Guide
+    </button>
     <button class="tab" data-tab="settings" title="App identity and generation options">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5"/></svg>
       Settings
     </button>
   </nav>
+
+  <!-- Shared selection behavior: how component sets in the selection are
+       treated. One control for every tab (Convert decides the generated
+       code, Config decides the variant grouping). -->
+  <div class="setstrip" id="setBehaviorStrip" hidden>
+    <span class="setstrip-label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" width="13" height="13"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg>
+      Component sets in selection:
+    </span>
+    <div class="segmented" id="setBehaviorSegment">
+      <button type="button" class="seg-btn" data-value="component" title="The set becomes one component with variant parameters; the Config tab groups its variants into one entry.">Component + variants</button>
+      <button type="button" class="seg-btn" data-value="frame" title="The set's canvas becomes a plain frame composable with every variant laid out inline.">Plain frame</button>
+      <button type="button" class="seg-btn" data-value="frame-of-components" title="One composable per variant plus the frame composable that calls them; the Config tab keeps separate entries.">Frame of components</button>
+    </div>
+    <input type="hidden" id="componentSetBehavior" value="component" />
+    <p class="hint setstrip-hint" id="setBehaviorHint"></p>
+  </div>
 
   <main>
     <!-- ============================ CONVERT ============================ -->
@@ -992,6 +1022,22 @@ mappingArgs: title=string:"Sign In", icon=@icon, maxLines=int:2, ratio=double:0.
         </summary>
         <div class="card-body">
           <p class="hint">When the selected components disagree on a field, that control shows <b>multiple values</b> instead of a value. Leave it as-is to keep each component’s own setting, or pick a value once to override it on <em>all</em> selected components when you press <b>Apply</b>. Unedited fields keep their per-component values too.</p>
+        </div>
+      </details>
+
+      <details class="card" open>
+        <summary>
+          <div class="card-head">
+            <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg></span>
+            <div class="card-titles">
+              <h3>Variant selections</h3>
+              <p>Several variants of one component set at once.</p>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="11" height="11" stroke-linecap="round"><path d="m9 5 7 7-7 7"/></svg>
+          </div>
+        </summary>
+        <div class="card-body">
+          <p class="hint">A component set’s variants share one generated composable, so the Config tab can treat the set as <b>one component with variants</b> instead of N separate components: the shared editor then writes the same configuration block into <em>every</em> variant’s description, keeping them in sync (divergent variant blocks would warn as <code>COMPONENT-CONFIG-CONFLICT</code> at generation, with only the first one winning). The notice is <b>recommended</b> — accept it or keep the variants separate for the current selection; the default behavior lives in <b>Settings → Variant sets in the selection</b> (Ask / One component / Separate).</p>
         </div>
       </details>
 
@@ -1403,6 +1449,7 @@ let settings = {
   dsStructure: 'object',
   dsUsage: false,
   dsUsageMin: 2,
+  componentSetBehavior: 'component',
 };
 
 /** Last curation snapshot from the sandbox (marks + asset library + pages). */
@@ -1510,6 +1557,7 @@ function applySettings(payload) {
     dsStructure: ['object', 'material', 'material-theme'].includes(payload.dsStructure) ? payload.dsStructure : 'object',
     dsUsage: payload.dsUsage === true,
     dsUsageMin: clampUsageMin(payload.dsUsageMin),
+    componentSetBehavior: ['component', 'frame', 'frame-of-components'].includes(payload.componentSetBehavior) ? payload.componentSetBehavior : 'component',
   };
   $('appName').value = settings.appName;
   $('packageName').value = settings.packageName;
@@ -1525,8 +1573,10 @@ function applySettings(payload) {
   $('dsStructure').value = settings.dsStructure || 'object';
   $('dsUsage').value = settings.dsUsage ? 'true' : 'false';
   $('dsUsageMin').value = String(settings.dsUsageMin);
+  $('componentSetBehavior').value = settings.componentSetBehavior || 'component';
   syncVariantSegment();
   syncVariantShapeSegment();
+  syncSetBehaviorStrip();
   syncAssetExportUI();
   syncDsSourceUI();
   syncDsUsageUI();
@@ -1572,6 +1622,19 @@ function syncVariantShapeSegment() {
   }
 }
 
+/* =========================================================================
+ * Shared selection-behavior strip (component sets, every tab)
+ * ========================================================================= */
+function syncSetBehaviorStrip() {
+  syncSegment('setBehaviorSegment', 'componentSetBehavior');
+  $('setBehaviorHint').innerHTML = {
+    component: 'Selected sets become <b>one component with variants</b> (variant parameters per the Settings below); the Config tab groups their variants into one entry.',
+    frame: 'Selected sets become a <b>plain frame composable</b> with every variant laid out inline, exactly as the set canvas looks.',
+    'frame-of-components': 'Selected sets become <b>one composable per variant</b> plus the frame composable that calls them; the Config tab keeps separate variant entries.',
+  }[$('componentSetBehavior').value] || '';
+  // The Config tab groups the selection's variant masters by this value.
+  ccRegroup();
+}
 /* =========================================================================
  * Asset-export control (Settings tab)
  * ========================================================================= */
@@ -1674,6 +1737,7 @@ function syncDsUsageUI() {
 }
 
 wireSegment('dsUsageSegment', 'dsUsage', syncDsUsageUI);
+wireSegment('setBehaviorSegment', 'componentSetBehavior', syncSetBehaviorStrip);
 $('dsUsageMin').onchange = () => {
   settings.dsUsageMin = clampUsageMin($('dsUsageMin').value);
   $('dsUsageMin').value = String(settings.dsUsageMin);
@@ -1756,6 +1820,10 @@ function kindChip(kind) {
 function renderSelection(payload) {
   const host = $('selection');
   const nodes = payload && payload.selectedNodes ? payload.selectedNodes : [];
+  // The shared component-set strip appears on every tab while the selection
+  // holds a component set (the choice drives Convert and Config alike).
+  const strip = $('setBehaviorStrip');
+  if (strip) strip.hidden = !nodes.some((n) => n.kind === 'COMPONENT_SET');
   const badge = $('selectionCount');
   badge.textContent = String(nodes.length);
   badge.hidden = nodes.length === 0;
@@ -1995,9 +2063,73 @@ function renderComponentConfigs(payload) {
   card.hidden = false;
   if (emptyState) emptyState.style.display = 'none';
   ccEditor = ccBuildEditor(masters);
-  renderConfigBadges(masters.length);
-  renderComponentEditorBody();
+  ccRegroup();
   renderPresetBar();
+}
+
+/* --------------------- variant-set grouping ---------------------
+ * Whether several variants of one component set collapse into ONE component
+ * entry follows the shared selection-behavior strip (`componentSetBehavior`):
+ * 'component' merges every multi-variant set into one editor entry (Apply
+ * writes the same configuration into every variant's description, keeping
+ * them in sync — divergent variant blocks would warn at generation as
+ * COMPONENT-CONFIG-CONFLICT with only the first one winning); 'frame' and
+ * 'frame-of-components' keep every variant master as its own entry. */
+
+/** The component sets present in the selection, in first-appearance order. */
+function ccVariantSets(masters) {
+  const map = new Map();
+  for (const master of masters) {
+    if (!master || !master.setId) continue;
+    let group = map.get(master.setId);
+    if (!group) {
+      group = { setId: master.setId, setName: master.setName || master.masterName, masters: [] };
+      map.set(master.setId, group);
+    }
+    group.masters.push(master);
+  }
+  return [...map.values()];
+}
+
+/** SetIds merged right now: every multi-variant set, when the strip says 'component'. */
+function ccMergedSetIds(masters) {
+  const merged = new Set();
+  if (masters.length < 2) return merged;
+  if (settings.componentSetBehavior !== 'component') return merged;
+  for (const group of ccVariantSets(masters)) {
+    if (group.masters.length >= 2) merged.add(group.setId);
+  }
+  return merged;
+}
+
+/** Logical components: a merged set collapses into one entry; order preserved. */
+function ccLogicalGroups(masters, merged) {
+  const groups = [];
+  const open = new Map();
+  for (const master of masters) {
+    if (master.setId && merged.has(master.setId)) {
+      let group = open.get(master.setId);
+      if (!group) {
+        group = { setId: master.setId, setName: master.setName || master.masterName, masters: [] };
+        open.set(master.setId, group);
+        groups.push(group);
+      }
+      group.masters.push(master);
+    } else {
+      groups.push({ setId: null, setName: null, masters: [master] });
+    }
+  }
+  return groups;
+}
+
+/** Recomputes the logical grouping from the current merge choices and re-renders. */
+function ccRegroup() {
+  const masters = ccPayload && ccPayload.masters ? ccPayload.masters : [];
+  if (!ccEditor || masters.length === 0) return;
+  ccEditor.mergedSets = ccMergedSetIds(masters);
+  ccEditor.groups = ccLogicalGroups(masters, ccEditor.mergedSets);
+  renderConfigBadges(ccEditor.groups.length);
+  renderComponentEditorBody();
 }
 
 function renderConfigBadges(count) {
@@ -2026,34 +2158,61 @@ function renderComponentEditorBody() {
   head.appendChild(kindChip('COMPONENT'));
   const name = document.createElement('span');
   name.className = 'config-name';
-  name.textContent = ccEditor.multi
-    ? 'Shared editor — ' + masters.length + ' components'
-    : masters[0].masterName;
-  if (ccEditor.multi) name.title = masters.slice(0, 6).map((m) => m.masterName).join(' · ');
+  const groups = ccEditor.groups;
+  const mergedSingle = groups.length === 1 && groups[0].setId !== null;
+  if (mergedSingle) {
+    name.textContent = groups[0].setName;
+    name.title = 'One component with ' + groups[0].masters.length + ' variants — Apply writes the configuration to every variant.';
+  } else if (ccEditor.multi) {
+    name.textContent = 'Shared editor — ' + groups.length + ' components';
+    name.title = masters.slice(0, 6).map((m) => m.masterName).join(' · ');
+  } else {
+    name.textContent = masters[0].masterName;
+  }
   head.appendChild(name);
+  if (mergedSingle) {
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = groups[0].masters.length + ' variants';
+    tag.title = 'Treated as one component with variants — Apply writes the configuration into every variant description.';
+    head.appendChild(tag);
+  }
   item.appendChild(head);
 
-  // Per-master rows: current value summary + parse issues.
-  const shown = masters.slice(0, 4);
-  for (const master of shown) {
-    const row = document.createElement('div');
-    row.className = 'config-summary';
-    const bits = ['• ' + master.masterName];
-    if (master.summary) bits.push('Current: ' + master.summary);
-    else bits.push('not configured');
-    row.textContent = bits.join(' — ');
-    item.appendChild(row);
-    if (master.issues && master.issues.length > 0) {
-      const issues = document.createElement('p');
-      issues.className = 'config-issues';
-      issues.textContent = '⚠ ' + master.masterName + ': ' + master.issues.join(' ');
-      item.appendChild(issues);
+  // Per-master rows, grouped under the merged sets: current value summary +
+  // parse issues.
+  const cap = 4;
+  let shown = 0;
+  for (const group of groups) {
+    if (group.setId !== null) {
+      const header = document.createElement('div');
+      header.className = 'config-summary';
+      header.textContent = '▸ ' + group.setName + ' — ' + group.masters.length + ' variants as one component';
+      item.appendChild(header);
     }
+    for (const master of group.masters) {
+      if (shown >= cap) break;
+      const row = document.createElement('div');
+      row.className = 'config-summary';
+      const bits = ['• ' + master.masterName];
+      if (master.summary) bits.push('Current: ' + master.summary);
+      else bits.push('not configured');
+      row.textContent = bits.join(' — ');
+      item.appendChild(row);
+      if (master.issues && master.issues.length > 0) {
+        const issues = document.createElement('p');
+        issues.className = 'config-issues';
+        issues.textContent = '⚠ ' + master.masterName + ': ' + master.issues.join(' ');
+        item.appendChild(issues);
+      }
+      shown += 1;
+    }
+    if (shown >= cap) break;
   }
-  if (masters.length > shown.length) {
+  if (masters.length > shown) {
     const more = document.createElement('div');
     more.className = 'more-note';
-    more.textContent = '+' + (masters.length - shown.length) + ' more components in the selection…';
+    more.textContent = '+' + (masters.length - shown) + ' more components in the selection…';
     item.appendChild(more);
   }
 
@@ -2377,8 +2536,8 @@ function ccActionsRow(masters) {
   const apply = document.createElement('button');
   apply.type = 'button';
   apply.className = 'primary';
-  apply.textContent = ccEditor.multi ? 'Apply to ' + masters.length + ' components' : 'Apply';
-  apply.title = 'Writes the configuration into each component description (prose kept)';
+  apply.textContent = ccEditor.groups.length > 1 ? 'Apply to ' + ccEditor.groups.length + ' components' : 'Apply';
+  apply.title = 'Writes the configuration into each component description (prose kept; a merged variant group writes every variant)';
   apply.onclick = () => {
     const perMaster = [];
     let allDefaults = 0;
@@ -3637,7 +3796,12 @@ wirePresetSaveForm();
 $('convertBtn').onclick = () => {
   setStatus('Converting…');
   const mode = $('mode').value;
-  parent.postMessage({ pluginMessage: { type: 'convert-selection', payload: { mode } } }, '*');
+  parent.postMessage({
+    pluginMessage: {
+      type: 'convert-selection',
+      payload: { mode, componentSetBehavior: settings.componentSetBehavior || 'component' },
+    },
+  }, '*');
 };
 
 $('exportZipBtn').onclick = () => {

@@ -545,6 +545,27 @@ component's own value on Apply; setting it once overrides it on **all**
 selected components. Untouched-but-shared fields (and per-component parse
 issues listed above the fields) keep applying per component.
 
+**Component sets.** Whenever the selection holds a component set, a strip
+under the tab bar ("Component sets in selection") offers three treatments
+that apply across **every** tab — Convert and Config both follow the same
+choice:
+
+- **Component with variants** — the set generates as one parameterized
+  component (one parameter per variant dimension); the Config tab groups the
+  variant masters into a single editor entry titled after the set, and Apply
+  writes the same configuration into every variant's description (which keeps
+  generation from reporting `COMPONENT-CONFIG-CONFLICT`).
+- **Frame with content** — the set's frame generates as a plain container
+  composable showing the variant it contains, with no variant parameters; the
+  Config tab keeps every variant master as its own entry.
+- **Frame of components** — each variant master generates its own composable
+  (named after the set plus its variant values), and the set frame's
+  composable calls them; the Config tab keeps the masters separate.
+
+The choice is remembered across sessions as the default and applies to new
+selections immediately; the retired per-selection notice and the Settings
+tab's `ask`/`merge`/`separate` default are gone.
+
 **Presets.** The plugin ships built-in starters (marked ★: Material Button /
 Card / Fab, icon and image assets, and an all-defaults reset) so new users
 have starting points without saving anything first. *Save current…* captures
@@ -556,11 +577,13 @@ values into the editor fields — nothing reaches a component until **Apply**.
 under the same name shadows one, and deleting it brings the starter back).
 
 The **Guide** tab documents the block format, roles, Material rules, asset
-directives, mapping sources, mixed-selection semantics and presets (including
+directives, mapping sources, mixed-selection semantics, component-set
+treatments and presets (including
 the shipped starters and the mapping auto-suggestion, which is a starting
-point only — Apply is what writes). Component
-*sets* are still not edited — select a variant master or the master component
-itself instead. Figma's known description-display lag applies to UI writes
+point only — Apply is what writes). The set object's own description is
+still never edited — the merged variant entry writes each **variant
+master's** description. Figma's known description-display lag applies to UI
+writes
 exactly as to manual edits — the block applies immediately at generation
 time; the published page text updates on the next re-publish. Because the
 visual editor rewrites the block text from parsed values (not the original

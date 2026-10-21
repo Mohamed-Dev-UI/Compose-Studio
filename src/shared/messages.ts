@@ -96,8 +96,16 @@ export type PageSummary = {
   current: boolean;
 };
 
+/** How component sets are treated across the plugin (shared strip control). */
+export type ComponentSetBehavior = 'component' | 'frame' | 'frame-of-components';
+
 export type ConvertSelectionPayload = {
   mode: 'standalone' | 'existing-design-system';
+  /**
+   * How component sets selected as conversion roots are treated, read from
+   * the shared strip control at click time (authoritative for this run).
+   */
+  componentSetBehavior: ComponentSetBehavior;
 };
 
 /** Settings persisted in Figma client storage. */
@@ -192,6 +200,17 @@ export type PluginSettings = {
    * token (2..99; baked into the exported conversion report).
    */
   dsUsageMin: number;
+  /**
+   * How component sets are treated across the plugin, chosen in the shared
+   * selection-behavior strip (visible on every tab while the selection holds
+   * a COMPONENT_SET): `component` converts a selected set into one component
+   * with variant parameters and groups the set's variants into one Config
+   * entry, `frame` keeps the set's canvas as a plain frame composable with
+   * all variants inline, and `frame-of-components` emits one composable per
+   * variant plus the frame composable that calls them (Config keeps separate
+   * entries).
+   */
+  componentSetBehavior: ComponentSetBehavior;
 };
 
 export type ConversionResultPayload = {
@@ -287,6 +306,15 @@ export type ComponentConfigInfo = {
    * until the user edits or applies.
    */
   suggestedMapping: string | null;
+  /** Component-set id when this master is a variant of one; null for plain components. */
+  setId: string | null;
+  /** Component-set name (the group this variant belongs to). */
+  setName: string | null;
+  /**
+   * This master's variant property assignments (e.g. `{ Notif: 'On' }`);
+   * null when the component is not a variant.
+   */
+  variantProps: Record<string, string> | null;
 };
 
 /** A named, reusable component configuration (persisted in client storage). */
