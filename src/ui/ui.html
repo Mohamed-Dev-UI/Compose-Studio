@@ -7,9 +7,10 @@
   src/shared/messages.ts. ZIP export is a small dependency-free "store"
   (uncompressed) ZIP writer below.
 
-  Layout: seven tabs (Convert / Mappings / Config / Assets & Ignore / Output /
-  Guide / Settings) driven by [data-tab] buttons; panels are #page-<name>. The
-  bottom bar (selection re-check + last run) is always visible.
+  Layout: seven tabs (Convert / Mappings / Selection / Assets & Ignore /
+  Output / Guide / Settings) driven by [data-tab] buttons; panels are
+  #page-<name>. The bottom bar (selection re-check + last run) is always
+  visible.
 -->
 <html>
 <head>
@@ -93,12 +94,14 @@
     background: var(--bg); border-bottom: 1px solid var(--border);
     flex: none; position: relative;
   }
-  /* Shared selection-behavior strip (component sets), shown on every tab. */
+  /* Shared selection-behavior card (component sets), inside the Selection tab. */
   .setstrip {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    padding: 7px 12px; flex: none;
-    background: var(--bg2, var(--bg)); border-bottom: 1px solid var(--border);
+    padding: 10px 12px; flex: none;
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+    margin-bottom: 10px;
   }
+  .setstrip:hover { border-color: var(--text2); }
   .setstrip[hidden] { display: none; }
   .setstrip-label {
     font-size: 11px; font-weight: 600; color: var(--text2);
@@ -502,6 +505,21 @@
   .config-actions { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
   .config-actions button.secondary { flex: none; min-width: 74px; padding: 0 9px; }
   .config-actions .config-filler { flex: 1; }
+  /* Per-item list: pick one logical item or edit all of them at once. */
+  .cc-itemlist { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+  .cc-itemlist[hidden] { display: none; }
+  .cc-itemrow {
+    appearance: none; font: inherit; text-align: left; cursor: pointer;
+    display: flex; align-items: center; gap: 7px;
+    padding: 5px 8px; border-radius: 6px;
+    background: var(--bg); border: 1px solid var(--border); color: var(--text2);
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .cc-itemrow:hover { border-color: var(--text2); }
+  .cc-itemrow.active { border-color: var(--accent); color: var(--text); background: rgba(127, 82, 255, 0.08); }
+  .cc-item-name { font-weight: 600; font-size: 11.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cc-item-status { font-size: 10px; color: var(--text2); flex: none; }
+  .cc-itemrow .tag { flex: none; }
   /* Visual configuration editor fields (CCD rev. 29). */
   .cc-field { margin-top: 8px; }
   .cc-label {
@@ -600,7 +618,7 @@
     </div>
     <div class="brand-text">
       <h1>Compose Studio</h1>
-      <span class="brand-sub">Figma selection → Jetpack Compose · <span id="buildTag">rev. 36</span></span>
+      <span class="brand-sub">Figma selection → Jetpack Compose · <span id="buildTag">rev. 37</span></span>
     </div>
   </header>
 
@@ -613,9 +631,9 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h13M20 17h0.01"/><circle cx="16" cy="7" r="2.2"/><circle cx="9.5" cy="12" r="2.2"/><circle cx="18.2" cy="17" r="2.2"/></svg>
       Mappings
     </button>
-    <button class="tab" data-tab="config" title="Visual editor for component configurations (role, assets, mapping)">
+    <button class="tab" data-tab="selection" title="Component-set behavior plus the visual configuration editor for everything selected">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.2"/><circle cx="16" cy="16" r="3.2"/><path d="M11.2 8H18M21 12.8V16M16 19.2h-3.2M8 11.2v5H4.2M13 13l1.5 1.5M13 19l1.5-1.5M8 4.8H13"/></svg>
-      Config
+      Selection
       <span class="tab-badge" id="configBadge" hidden></span>
     </button>
     <button class="tab" data-tab="assets" title="Asset prefixes, ignore rules, asset pages">
@@ -636,23 +654,6 @@
       Settings
     </button>
   </nav>
-
-  <!-- Shared selection behavior: how component sets in the selection are
-       treated. One control for every tab (Convert decides the generated
-       code, Config decides the variant grouping). -->
-  <div class="setstrip" id="setBehaviorStrip" hidden>
-    <span class="setstrip-label">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" width="13" height="13"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg>
-      Component sets in selection:
-    </span>
-    <div class="segmented" id="setBehaviorSegment">
-      <button type="button" class="seg-btn" data-value="component" title="The set becomes one component with variant parameters; the Config tab groups its variants into one entry.">Component + variants</button>
-      <button type="button" class="seg-btn" data-value="frame" title="The set's canvas becomes a plain frame composable with every variant laid out inline.">Plain frame</button>
-      <button type="button" class="seg-btn" data-value="frame-of-components" title="One composable per variant plus the frame composable that calls them; the Config tab keeps separate entries.">Frame of components</button>
-    </div>
-    <input type="hidden" id="componentSetBehavior" value="component" />
-    <p class="hint setstrip-hint" id="setBehaviorHint"></p>
-  </div>
 
   <main>
     <!-- ============================ CONVERT ============================ -->
@@ -817,11 +818,28 @@
       <input type="file" id="importProfileInput" accept=".json,application/json" style="display:none" />
     </section>
 
-    <!-- ============================= CONFIG ============================ -->
-    <section class="tabpanel" id="page-config" role="tabpanel">
+    <!-- =========================== SELECTION =========================== -->
+    <section class="tabpanel" id="page-selection" role="tabpanel">
       <div class="intro">
         <svg class="intro-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="15" height="15"><circle cx="12" cy="12" r="9"/><path d="M12 8.5v.01M12 11.5V16"/></svg>
         <p><b>Configure components, not descriptions.</b> Select components (or instances) on the canvas and edit their <code>compose-studio:</code> configuration here — the plugin writes the block into the component description for you, replacing any previous one. See the <b>Guide</b> tab for the full reference.</p>
+      </div>
+
+      <!-- Shared selection behavior: how component sets in the selection are
+           treated. One choice for every tab (Convert decides the generated
+           code, the item list below decides the grouping). -->
+      <div class="setstrip" id="setBehaviorStrip" hidden>
+        <span class="setstrip-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" width="13" height="13"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg>
+          Component sets in selection:
+        </span>
+        <div class="segmented" id="setBehaviorSegment">
+          <button type="button" class="seg-btn" data-value="component" title="The set becomes one component with variant parameters; the item list groups its variants into one entry.">Component + variants</button>
+          <button type="button" class="seg-btn" data-value="frame" title="The set's canvas becomes a plain frame composable with every variant laid out inline.">Plain frame</button>
+          <button type="button" class="seg-btn" data-value="frame-of-components" title="One composable per variant plus the frame composable that calls them; the item list keeps separate entries.">Frame of components</button>
+        </div>
+        <input type="hidden" id="componentSetBehavior" value="component" />
+        <p class="hint setstrip-hint" id="setBehaviorHint"></p>
       </div>
 
       <div class="card" id="presetCard">
@@ -884,6 +902,7 @@
           </div>
         </summary>
         <div class="card-body">
+          <div class="cc-itemlist" id="configItemList" hidden></div>
           <div id="configHost"></div>
         </div>
       </details>
@@ -1037,7 +1056,7 @@ mappingArgs: title=string:"Sign In", icon=@icon, maxLines=int:2, ratio=double:0.
           </div>
         </summary>
         <div class="card-body">
-          <p class="hint">A component set’s variants share one generated composable, so the Config tab can treat the set as <b>one component with variants</b> instead of N separate components: the shared editor then writes the same configuration block into <em>every</em> variant’s description, keeping them in sync (divergent variant blocks would warn as <code>COMPONENT-CONFIG-CONFLICT</code> at generation, with only the first one winning). The notice is <b>recommended</b> — accept it or keep the variants separate for the current selection; the default behavior lives in <b>Settings → Variant sets in the selection</b> (Ask / One component / Separate).</p>
+          <p class="hint">A component set’s variants share one generated composable, so the <b>Selection</b> tab can treat the set as <b>one component with variants</b> instead of N separate components: the editor entry then writes the same configuration block into <em>every</em> variant’s description, keeping them in sync (divergent variant blocks would warn as <code>COMPONENT-CONFIG-CONFLICT</code> at generation, with only the first one winning). Which treatment applies is the shared strip at the top of the <b>Selection</b> tab — <b>Component + variants</b> groups the variants into one entry, the two frame treatments keep them separate; the choice is remembered and drives Convert the same way.</p>
         </div>
       </details>
 
@@ -1623,16 +1642,16 @@ function syncVariantShapeSegment() {
 }
 
 /* =========================================================================
- * Shared selection-behavior strip (component sets, every tab)
+ * Shared selection-behavior control (component sets, Selection tab)
  * ========================================================================= */
 function syncSetBehaviorStrip() {
   syncSegment('setBehaviorSegment', 'componentSetBehavior');
   $('setBehaviorHint').innerHTML = {
-    component: 'Selected sets become <b>one component with variants</b> (variant parameters per the Settings below); the Config tab groups their variants into one entry.',
+    component: 'Selected sets become <b>one component with variants</b> (variant parameters per the Variant code shape setting); the Selection tab groups their variants into one entry.',
     frame: 'Selected sets become a <b>plain frame composable</b> with every variant laid out inline, exactly as the set canvas looks.',
-    'frame-of-components': 'Selected sets become <b>one composable per variant</b> plus the frame composable that calls them; the Config tab keeps separate variant entries.',
+    'frame-of-components': 'Selected sets become <b>one composable per variant</b> plus the frame composable that calls them; the Selection tab keeps separate variant entries.',
   }[$('componentSetBehavior').value] || '';
-  // The Config tab groups the selection's variant masters by this value.
+  // The Selection tab groups the selection's variant masters by this value.
   ccRegroup();
 }
 /* =========================================================================
@@ -1820,8 +1839,8 @@ function kindChip(kind) {
 function renderSelection(payload) {
   const host = $('selection');
   const nodes = payload && payload.selectedNodes ? payload.selectedNodes : [];
-  // The shared component-set strip appears on every tab while the selection
-  // holds a component set (the choice drives Convert and Config alike).
+  // The component-set behavior card lives at the top of the Selection tab;
+  // the choice drives Convert and the item grouping below alike.
   const strip = $('setBehaviorStrip');
   if (strip) strip.hidden = !nodes.some((n) => n.kind === 'COMPONENT_SET');
   const badge = $('selectionCount');
@@ -1864,7 +1883,7 @@ function renderSelection(payload) {
 }
 
 /* =========================================================================
- * Component configuration descriptions (CCD) — visual editor (Config tab)
+ * Component configuration descriptions (CCD) — visual editor (Selection tab)
  * =========================================================================
  * ONE visual editor for the whole selection's component masters. Its fields
  * mirror the parsed config (role, kind, assets, implementation, mapping +
@@ -1900,8 +1919,10 @@ const CC_ARG_PLACEHOLDERS = {
 
 let ccPayload = null; // last 'component-configs' payload
 let ccPresets = []; // saved presets (kept current by payload / 'component-presets')
-let ccEditor = null; // shared editor state { multi, role/kind/assets/implementation/mapping/note states, args rows }
+let ccEditor = null; // editor state for the active scope { multi, masters, groups, role/kind/... states, args rows }
 let ccArgsField = null; // the rendered Mapping-arguments field node (for focus-safe refreshes)
+// Which item the editor targets: 'all', or a group key (setId, else masterId).
+let ccScope = 'all';
 
 function sendComponentConfig(payload) {
   parent.postMessage({ pluginMessage: { type: 'set-component-config', payload } }, '*');
@@ -2046,6 +2067,23 @@ function ccConfigForMaster(master) {
 function renderComponentConfigs(payload) {
   ccPayload = payload || null;
   if (ccPayload && ccPayload.presets) ccPresets = ccPayload.presets;
+  ccRenderScoped();
+  renderPresetBar();
+}
+
+/** The stable key of a logical group: the set id, else its first master id. */
+function ccGroupKey(group) {
+  return group.setId || (group.masters[0] ? group.masters[0].masterId : null);
+}
+
+/**
+ * Rebuilds the editor for the active scope. 'all' targets every master in
+ * the selection (untouched fields keep per-item values); a group key targets
+ * one logical item (a standalone master, or a merged variant set), so Apply
+ * writes only that item. The scope survives re-posts while its item still
+ * exists and resets to 'all' when a regroup dissolves it.
+ */
+function ccRenderScoped() {
   const masters = ccPayload && ccPayload.masters ? ccPayload.masters : [];
   const card = $('configCard');
   const emptyState = $('configEmptyState');
@@ -2055,16 +2093,29 @@ function renderComponentConfigs(payload) {
     card.hidden = true;
     if (emptyState) emptyState.style.display = '';
     host.innerHTML = '';
+    const list = $('configItemList');
+    if (list) list.innerHTML = '';
     ccEditor = null;
     renderConfigBadges(0);
-    renderPresetBar();
     return;
   }
   card.hidden = false;
   if (emptyState) emptyState.style.display = 'none';
-  ccEditor = ccBuildEditor(masters);
-  ccRegroup();
-  renderPresetBar();
+  const merged = ccMergedSetIds(masters);
+  const groups = ccLogicalGroups(masters, merged);
+  if (ccScope !== 'all' && !groups.some((g) => ccGroupKey(g) === ccScope)) ccScope = 'all';
+  const scoped = ccScope === 'all'
+    ? masters
+    : groups.find((g) => ccGroupKey(g) === ccScope).masters;
+  ccEditor = ccBuildEditor(scoped);
+  ccEditor.mergedSets = merged;
+  ccEditor.groups = ccScope === 'all'
+    ? groups
+    : groups.filter((g) => ccGroupKey(g) === ccScope);
+  ccEditor.masters = scoped;
+  renderConfigBadges(groups.length);
+  ccRenderItemList(groups);
+  renderComponentEditorBody();
 }
 
 /* --------------------- variant-set grouping ---------------------
@@ -2124,12 +2175,78 @@ function ccLogicalGroups(masters, merged) {
 
 /** Recomputes the logical grouping from the current merge choices and re-renders. */
 function ccRegroup() {
+  if (!ccEditor) return;
   const masters = ccPayload && ccPayload.masters ? ccPayload.masters : [];
-  if (!ccEditor || masters.length === 0) return;
-  ccEditor.mergedSets = ccMergedSetIds(masters);
-  ccEditor.groups = ccLogicalGroups(masters, ccEditor.mergedSets);
-  renderConfigBadges(ccEditor.groups.length);
-  renderComponentEditorBody();
+  if (masters.length === 0) return;
+  // For the 'all' scope the field state is built from the same masters
+  // regardless of grouping, so touched-but-unapplied edits survive; an item
+  // scope re-resolves its group (dissolved sets fall back to 'all').
+  if (ccScope === 'all') {
+    const merged = ccMergedSetIds(masters);
+    ccEditor.mergedSets = merged;
+    ccEditor.groups = ccLogicalGroups(masters, merged);
+    renderConfigBadges(ccEditor.groups.length);
+    ccRenderItemList(ccEditor.groups);
+    renderComponentEditorBody();
+  } else {
+    ccRenderScoped();
+  }
+}
+
+/** Renders the per-item list: one row per logical item plus "All selected". */
+function ccRenderItemList(groups) {
+  const list = $('configItemList');
+  if (!list) return;
+  list.innerHTML = '';
+  if (groups.length < 2) {
+    list.hidden = true;
+    return;
+  }
+  list.hidden = false;
+  list.appendChild(ccItemRow('all', 'All selected', groups.length + ' components', null, ccScope === 'all', () => {
+    ccScope = 'all';
+    ccRenderScoped();
+  }));
+  for (const group of groups) {
+    const key = ccGroupKey(group);
+    const isSet = group.setId !== null;
+    const anyConfig = group.masters.some((m) => m.hasConfig);
+    list.appendChild(ccItemRow(
+      key,
+      isSet ? group.setName : group.masters[0].masterName,
+      anyConfig ? 'configured' : 'not configured',
+      isSet ? group.masters.length + ' variants' : null,
+      ccScope === key,
+      () => {
+        ccScope = key;
+        ccRenderScoped();
+      },
+    ));
+  }
+}
+
+/** One clickable item-list row. */
+function ccItemRow(key, nameText, statusText, tagText, active, onclick) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'cc-itemrow' + (active ? ' active' : '');
+  row.dataset.key = key;
+  const name = document.createElement('span');
+  name.className = 'cc-item-name';
+  name.textContent = nameText;
+  row.appendChild(name);
+  if (tagText) {
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = tagText;
+    row.appendChild(tag);
+  }
+  const status = document.createElement('span');
+  status.className = 'cc-item-status';
+  status.textContent = statusText;
+  row.appendChild(status);
+  row.onclick = onclick;
+  return row;
 }
 
 function renderConfigBadges(count) {
@@ -2146,7 +2263,7 @@ function renderConfigBadges(count) {
 function renderComponentEditorBody() {
   const host = $('configHost');
   if (!host) return;
-  const masters = ccPayload && ccPayload.masters ? ccPayload.masters : [];
+  const masters = ccEditor ? ccEditor.masters || [] : [];
   if (!ccEditor || masters.length === 0) return;
   host.innerHTML = '';
 
@@ -2747,7 +2864,7 @@ function sendPresetMessage(type, payload) {
 
 /** Captures the merged current editor state as a preset payload. */
 function currentPresetConfig() {
-  const masters = ccPayload && ccPayload.masters ? ccPayload.masters : [];
+  const masters = ccEditor ? ccEditor.masters || [] : [];
   // Untouched fields capture the first configured master's value (mixed
   // selections have no single "current" — the guide tells users to tweak
   // before saving when that fallback is not what they want).
@@ -3785,7 +3902,7 @@ $('variantShapeSegment').querySelectorAll('.seg-btn').forEach((button) => {
 });
 
 /* =========================================================================
- * Wiring: Config tab (component configurations + presets)
+ * Wiring: Selection tab (component configurations + presets)
  * ========================================================================= */
 wireComponentPresets();
 wirePresetSaveForm();

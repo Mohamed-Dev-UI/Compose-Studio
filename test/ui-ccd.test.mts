@@ -723,7 +723,7 @@ test('CCD variant groups: component merges, frame modes never do', () => {
   }
 });
 
-test('The shared component-set strip shows while the selection holds a component set', () => {
+test('The component-set behavior card (Selection tab) shows while the selection holds a component set', () => {
   const { document, stubWindow } = makeDomStub();
   runUiScript(document, stubWindow, []);
   const onmessage = stubWindow.onmessage as (event: unknown) => void;
@@ -753,11 +753,117 @@ test('The shared component-set strip shows while the selection holds a component
 test('Plugin UI orders Guide between Output and Settings', () => {
   const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/ui/ui.html'), 'utf8');
   const at = (name: string) => html.indexOf(`data-tab="${name}"`);
-  for (const tab of ['convert', 'mappings', 'config', 'assets', 'output', 'guide', 'settings']) {
+  for (const tab of ['convert', 'mappings', 'selection', 'assets', 'output', 'guide', 'settings']) {
     assert.ok(at(tab) >= 0, `the ${tab} tab exists`);
   }
-  assert.ok(at('config') < at('assets'), 'Config sits before Assets & Ignore');
+  assert.ok(at('selection') < at('assets'), 'Selection sits before Assets & Ignore');
   assert.ok(at('assets') < at('output'), 'Assets & Ignore sits before Output');
   assert.ok(at('output') < at('guide'), 'Guide moved between Output and Settings');
   assert.ok(at('guide') < at('settings'), 'Guide sits right before Settings');
+  assert.ok(html.includes('id="page-selection"'), 'the Selection panel exists');
+  assert.ok(
+    html.indexOf('id="setBehaviorStrip"') > html.indexOf('id="page-selection"'),
+    'the component-set behavior card lives inside the Selection tab',
+  );
+});
+
+/* --------------------- per-item scope (rev. 37) --------------------- */
+
+/** A row's name/status/tag text (the stub's textContent does not derive from children). */
+const rowName = (row: El): string => firstText(findAll(row, 'cc-item-name'));
+const rowStatus = (row: El): string => firstText(findAll(row, 'cc-item-status'));
+const rowTag = (row: El): string => firstText(findAll(row, 'tag'));
+
+const twoMasters = (): MasterFixture[] => {
+  const cardA = blankConfig();
+  cardA.role = 'card';
+  return [
+    { masterId: 'm1', masterName: 'Card/A', hasConfig: true, config: cardA },
+    { masterId: 'm2', masterName: 'Button/B', hasConfig: false, config: null },
+  ];
+};
+
+test('Selection tab: the item list renders All selected plus one row per logical item', () => {
+  const { document, stubWindow } = makeDomStub();
+  runUiScript(document, stubWindow, []);
+  postConfigs(stubWindow, twoMasters());
+  const list = document.getElementById('configItemList') as El;
+  const rows = findAll(list, 'cc-itemrow');
+  assert.equal(rows.length, 3, 'All selected + the two items');
+  assert.ok(rowName(rows[0]!).includes('All selected'), 'the All entry comes first');
+  assert.ok(rowStatus(rows[0]!).includes('2 components'), 'the All entry counts the items');
+  assert.ok(rowName(rows[1]!).includes('Card/A'), 'the first item row carries its name');
+  assert.ok(rowStatus(rows[1]!).includes('configured'), 'a configured item says so');
+  assert.ok(rowName(rows[2]!).includes('Button/B'), 'the second item row carries its name');
+  assert.ok(rowStatus(rows[2]!).includes('not configured'), 'an all-defaults item says so');
+
+  // A merged variant set is a single logical item — no list for one item.
+  postConfigs(stubWindow, variantMasters());
+  const list2 = document.getElementById('configItemList') as El & { hidden: boolean };
+  assert.equal(list2.hidden, true, 'one logical item needs no list');
+});
+
+test('Selection tab: clicking an item row scopes the editor and Apply to that item', () => {
+  const { document, stubWindow, posted } = makeDomStub();
+  runUiScript(document, stubWindow, posted);
+  postConfigs(stubWindow, twoMasters());
+  const list = document.getElementById('configItemList') as El;
+  const cardRow = findAll(list, 'cc-itemrow').find((r) => rowName(r).includes('Card/A')) as El & { onclick: () => void };
+  assert.ok(cardRow, 'the Card item row exists');
+  cardRow.onclick();
+  const host = document.getElementById('configHost') as El;
+  assert.ok(firstText(findAll(host, 'config-name')).includes('Card/A'), 'the editor is titled after the scoped item');
+  assert.equal(findAll(host, 'cc-mixed-chip').length, 0, 'nothing is mixed within one item');
+
+  posted.length = 0;
+  const apply = findApply(host) as El & { onclick: () => void };
+  assert.equal(textOf(apply), 'Apply', 'a scoped item needs no count label');
+  apply.onclick();
+  const writes = of(posted, 'set-component-config');
+  assert.equal(writes.length, 1, 'Apply writes only the scoped item');
+  assert.deepEqual(
+    writes.map((m) => (m.payload as { masterId: string }).masterId),
+    ['m1'],
+    'the untouched sibling is not written',
+  );
+
+  // The scope survives the plugin's re-post after an Apply.
+  postConfigs(stubWindow, twoMasters());
+  const host2 = document.getElementById('configHost') as El;
+  assert.ok(firstText(findAll(host2, 'config-name')).includes('Card/A'), 'the scope survives the re-post');
+
+  // The All selected row restores the whole-selection editor.
+  const allRow = findAll(document.getElementById('configItemList') as El, 'cc-itemrow')
+    .find((r) => rowName(r).includes('All selected')) as El & { onclick: () => void };
+  assert.ok(allRow, 'the All selected row exists');
+  allRow.onclick();
+  assert.equal(findAll(host2, 'cc-mixed-chip').length, 1, 'the shared editor shows the mixed role again');
+});
+
+test('Selection tab: a dissolved scope falls back to All selected on a behavior change', () => {
+  const { document, stubWindow } = makeDomStub();
+  runUiScript(document, stubWindow, []);
+  postSettings(stubWindow, 'component');
+  const extra = { masterId: 's1', masterName: 'Solo/C', hasConfig: false, config: null };
+  postConfigs(stubWindow, [...variantMasters(), extra]);
+  const list = document.getElementById('configItemList') as El;
+  const rows = findAll(list, 'cc-itemrow');
+  assert.equal(rows.length, 3, 'All + the merged set + the standalone master');
+  const setRow = rows.find((r) => rowName(r).includes('Notif')) as El & { onclick: () => void };
+  assert.ok(rowTag(setRow).includes('2 variants'), 'the set row carries its variant count');
+  setRow.onclick();
+  const host = document.getElementById('configHost') as El;
+  assert.ok(firstText(findAll(host, 'config-name')).includes('Notif'), 'the set is scoped');
+
+  // Switching the behavior dissolves the set group: the scope resets.
+  postSettings(stubWindow, 'frame-of-components');
+  assert.equal(
+    textOf(document.getElementById('configCount') as El),
+    '3',
+    'the variants stay separate after the switch',
+  );
+  assert.ok(
+    firstText(findAll(host, 'config-name')).includes('Shared editor'),
+    'the scope fell back to the whole selection',
+  );
 });

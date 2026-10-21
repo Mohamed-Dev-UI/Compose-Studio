@@ -52,7 +52,7 @@ make requests even if its code later changed maliciously; see
 
 1. Select one or more top-level frames in the canvas (screens are usually the
    whole `Frame` on the page). The panel is organized into seven tabs:
-   **Convert**, **Mappings**, **Config**, **Assets & Ignore**, **Output**,
+   **Convert**, **Mappings**, **Selection**, **Assets & Ignore**, **Output**,
    **Guide**, **Settings**.
    The Selection card in **Convert** follows the canvas live — click frames
    and the list updates without pressing anything.

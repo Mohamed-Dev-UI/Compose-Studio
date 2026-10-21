@@ -444,7 +444,7 @@ note: human note, copied into the generated file
 Lines starting with `#` are comments; unknown keys or values are reported
 (`COMPONENT-CONFIG-INVALID` as a plugin diagnostic, plus an in-editor note)
 and skipped without aborting the parse. The exact template is available in
-the plugin UI (Config tab → advanced raw-text editor, or **Copy block** from
+the plugin UI (Selection tab → advanced raw-text editor, or **Copy block** from
 an unconfigured component).
 
 ### Roles
@@ -514,12 +514,16 @@ asset library → auto-component generation.
 - With no configuration, everything behaves exactly as in previous
   revisions.
 
-### Plugin UI editor (Config tab)
+### Plugin UI editor (Selection tab)
 
-Selecting instances or components fills the **Config** tab with a single
-visual editor for the whole selection (every selection node resolves to its
-master component first; multiple selection nodes pointing at one master show
-once). Instead of editing text, fields are parsed-config controls:
+Selecting instances or components fills the **Selection** tab with a visual
+editor for the current scope (every selection node resolves to its master
+component first; multiple selection nodes pointing at one master show once).
+With several logical components in the selection, an **item list** at the top
+of the editor card offers **All selected** plus one row per component —
+clicking a row retargets the editor and its Apply to that component alone,
+*All selected* restores the whole-selection editor. Instead of editing text,
+fields are parsed-config controls:
 
 | Field                        | Control                                       |
 | ---------------------------- | --------------------------------------------- |
@@ -545,22 +549,22 @@ component's own value on Apply; setting it once overrides it on **all**
 selected components. Untouched-but-shared fields (and per-component parse
 issues listed above the fields) keep applying per component.
 
-**Component sets.** Whenever the selection holds a component set, a strip
-under the tab bar ("Component sets in selection") offers three treatments
-that apply across **every** tab — Convert and Config both follow the same
-choice:
+**Component sets.** Whenever the selection holds a component set, a card at
+the top of the Selection tab ("Component sets in selection") offers three
+treatments that apply across **every** tab — Convert follows the same choice
+for the generated code, and the item list below re-groups on the spot:
 
 - **Component with variants** — the set generates as one parameterized
-  component (one parameter per variant dimension); the Config tab groups the
-  variant masters into a single editor entry titled after the set, and Apply
+  component (one parameter per variant dimension); the item list groups the
+  variant masters into a single entry titled after the set, and Apply
   writes the same configuration into every variant's description (which keeps
   generation from reporting `COMPONENT-CONFIG-CONFLICT`).
 - **Frame with content** — the set's frame generates as a plain container
   composable showing the variant it contains, with no variant parameters; the
-  Config tab keeps every variant master as its own entry.
+  item list keeps every variant master as its own entry.
 - **Frame of components** — each variant master generates its own composable
   (named after the set plus its variant values), and the set frame's
-  composable calls them; the Config tab keeps the masters separate.
+  composable calls them; the item list keeps the masters separate.
 
 The choice is remembered across sessions as the default and applies to new
 selections immediately; the retired per-selection notice and the Settings
