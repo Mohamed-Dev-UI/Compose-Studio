@@ -716,7 +716,12 @@ function componentConfigInfo(
   masterName: string,
   nodeNames: string[],
   description: unknown,
-  variant: { setId: string | null; setName: string | null; variantProps: Record<string, string> | null },
+  variant: {
+    setId: string | null;
+    setName: string | null;
+    variantProps: Record<string, string> | null;
+    suggestedMapping?: string | null;
+  },
 ): ComponentConfigInfo {
   let prose = '';
   let blockText: string | null = null;
@@ -748,7 +753,9 @@ function componentConfigInfo(
     blockText,
     config,
     issues,
-    suggestedMapping: suggestMappingName(masterName),
+    suggestedMapping: variant.suggestedMapping !== undefined
+      ? variant.suggestedMapping
+      : suggestMappingName(masterName),
     setId: variant.setId,
     setName: variant.setName,
     variantProps: variant.variantProps,
@@ -819,6 +826,22 @@ async function postComponentConfigs(): Promise<void> {
     entry.nodeNames.push(...candidate.names);
     masters.set(masterId, entry);
   }));
+  // A merged variant set (behavior 'component', ≥2 variants in the selection)
+  // collapses into one editor entry, so its mapping default is the set name —
+  // per-variant guesses would surface as mixed values for one component.
+  const setSuggestion = new Map<string, string>();
+  if (settings.componentSetBehavior === 'component') {
+    const bySet = new Map<string, { name: string; count: number }>();
+    for (const entry of masters.values()) {
+      if (!entry.setId || !entry.setName) continue;
+      const agg = bySet.get(entry.setId) ?? { name: entry.setName, count: 0 };
+      agg.count += 1;
+      bySet.set(entry.setId, agg);
+    }
+    for (const [setId, agg] of bySet) {
+      if (agg.count >= 2) setSuggestion.set(setId, agg.name);
+    }
+  }
   const payload: ComponentConfigsPayload = {
     version: COMPOSE_CONFIG_VERSION,
     template: COMPOSE_CONFIG_TEMPLATE,
@@ -828,6 +851,9 @@ async function postComponentConfigs(): Promise<void> {
         setId: entry.setId,
         setName: entry.setName,
         variantProps: entry.variantProps,
+        suggestedMapping: entry.setId && setSuggestion.has(entry.setId)
+          ? suggestMappingName(setSuggestion.get(entry.setId) ?? '')
+          : undefined,
       })),
   };
   postMessage({ type: 'component-configs', payload });

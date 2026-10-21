@@ -594,6 +594,48 @@ test('CCD auto-assign: multi-selection seeds per-master names and Apply keeps ea
   );
 });
 
+test('CCD auto-assign: a merged variant set seeds the set name as the shared mapping', () => {
+  const { document, stubWindow, posted } = makeDomStub();
+  runUiScript(document, stubWindow, posted);
+  // Merged sets: the plugin posts the set-derived name for every variant.
+  postConfigs(stubWindow, [
+    { masterId: 'v1', masterName: 'Notif=On', hasConfig: false, config: null, setId: 'set1', setName: 'Notif', variantProps: { Notif: 'On' }, suggestedMapping: 'Notif' },
+    { masterId: 'v2', masterName: 'Notif=Off', hasConfig: false, config: null, setId: 'set1', setName: 'Notif', variantProps: { Notif: 'Off' }, suggestedMapping: 'Notif' },
+  ]);
+  const host = document.getElementById('configHost') as El;
+  const mappingInput = findFieldControl(host, 'Mapping (app composable)');
+  assert.equal(mappingInput?.value, 'Notif', 'the set name is pre-filled as the mapping');
+  assert.equal(findAll(host, 'cc-mixed-chip').length, 0, 'the shared set name is not mixed');
+
+  posted.length = 0;
+  const apply = findApply(host) as El & { onclick: () => void };
+  assert.ok(apply, 'an Apply button exists');
+  apply.onclick();
+  const writes = of(posted, 'set-component-config');
+  assert.equal(writes.length, 2, 'Apply writes the merged component into every variant');
+  assert.deepEqual(
+    writes.map((message) => ((message.payload as { config?: { mapping?: string } }).config ?? {}).mapping),
+    ['Notif', 'Notif'],
+    'every variant gets the set-name mapping',
+  );
+});
+
+test('CCD auto-assign: frame behaviors keep per-variant mapping suggestions', () => {
+  const { document, stubWindow } = makeDomStub();
+  runUiScript(document, stubWindow, []);
+  postSettings(stubWindow, 'frame-of-components');
+  // Frame modes: the plugin keeps each variant's own name-derived suggestion.
+  postConfigs(stubWindow, [
+    { masterId: 'v1', masterName: 'Notif=On', hasConfig: false, config: null, setId: 'set1', setName: 'Notif', variantProps: { Notif: 'On' }, suggestedMapping: 'NotifOn' },
+    { masterId: 'v2', masterName: 'Notif=Off', hasConfig: false, config: null, setId: 'set1', setName: 'Notif', variantProps: { Notif: 'Off' }, suggestedMapping: 'NotifOff' },
+  ]);
+  const host = document.getElementById('configHost') as El;
+  const chips = findAll(host, 'cc-mixed-chip');
+  assert.equal(chips.length, 1, 'the mapping control stays mixed in frame-of-components mode');
+  assert.ok(firstText(chips).includes('NotifOn'), 'the first variant keeps its own derived name');
+  assert.ok(firstText(chips).includes('NotifOff'), 'the other variant keeps its own derived name');
+});
+
 test('CCD preset bar: built-in starters are marked, not deletable, and user presets still delete', () => {
   const { document, stubWindow, posted } = makeDomStub();
   runUiScript(document, stubWindow, posted);
